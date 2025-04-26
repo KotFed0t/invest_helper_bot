@@ -1,0 +1,12 @@
+FROM golang:1.22.0-alpine
+
+WORKDIR /usr/src/app
+
+COPY . .
+
+ENV CGO_ENABLED=0
+ENV GOOS=linux
+
+RUN go mod download
+
+CMD ["go", "run", "cmd/main.go"]
