@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/data/cache"
 	"github.com/KotFed0t/invest_helper_bot/data/repository"
 	"github.com/KotFed0t/invest_helper_bot/data/session"
+	"github.com/KotFed0t/invest_helper_bot/internal/externalApi/moexApi"
 	"github.com/KotFed0t/invest_helper_bot/internal/service/investHelperService"
 	"github.com/KotFed0t/invest_helper_bot/internal/tgbot"
 	"github.com/KotFed0t/invest_helper_bot/internal/transport/telegram"
@@ -23,12 +25,19 @@ func main() {
 
 	slog.Debug("config", slog.Any("cfg", cfg))
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	pgClient := data.NewPostgresClient(cfg)
 	pgRepo := repository.NewPostgres(cfg, pgClient)
 
 	redisClient := data.NewRedisClient(cfg)
-	redisCache := cache.NewRedisCache(redisClient)
-	redisSession := session.NewRedisSession(redisClient)
+	redisCache := cache.NewRedisCache(redisClient, cfg)
+	redisSession := session.NewRedisSession(redisClient, cfg)
+
+	moexApiClient := moexApi.New(cfg)
+
+	go initialFillCache(ctx, moexApiClient, redisCache)
 
 	investHelperSrv := investHelperService.New(pgRepo, redisCache)
 
@@ -66,4 +75,22 @@ func setupLogger(cfg *config.Config) {
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(log)
+}
+
+func initialFillCache(ctx context.Context, moexApiClient *moexApi.MoexApi, redisCache *cache.RedisCache) {
+	slog.Info("start initial cache fiilling")
+
+	stocksInfo, err := moexApiClient.GetStocsInfo(ctx)
+	if err != nil {
+		slog.Error("initialFillCache failed on GetStocsInfo", slog.String("err", err.Error()))
+		return
+	}
+
+	err = redisCache.SetStocks(ctx, stocksInfo)
+	if err != nil {
+		slog.Error("initialFillCache failed on SetStocks", slog.String("err", err.Error()))
+		return
+	}
+
+	slog.Info("cache filled successfully")
 }

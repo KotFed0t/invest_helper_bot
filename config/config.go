@@ -9,11 +9,14 @@ import (
 )
 
 type Config struct {
-	Env      string `env:"ENV"`
-	LogLevel string `env:"LOG_LEVEL"`
-	Postgres Postgres
-	Telegram Telegram
-	Redis    Redis
+	Env               string `env:"ENV"`
+	LogLevel          string `env:"LOG_LEVEL"`
+	Postgres          Postgres
+	Telegram          Telegram
+	Redis             Redis
+	API               API
+	Cache             Cache
+	SessionExpiration time.Duration `env:"SESSION_EXPIRATION"`
 }
 
 type Postgres struct {
@@ -40,6 +43,20 @@ type Redis struct {
 	Port     int    `env:"REDIS_PORT"`
 	Password string `env:"REDIS_PASSWORD"`
 	DB       int    `env:"REDIS_DB"`
+}
+
+type API struct {
+	Debug   bool          `env:"API_DEBUG"`
+	Timeout time.Duration `env:"API_TIMEOUT"`
+	MoexApi MoexApi
+}
+
+type MoexApi struct {
+	Url string `env:"MOEX_API_URL"`
+}
+
+type Cache struct {
+	StocksExpiration time.Duration `env:"CACHE_STOCKS_EXPIRATION"`
 }
 
 func MustLoad() *Config {

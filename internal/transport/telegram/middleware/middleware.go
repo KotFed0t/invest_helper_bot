@@ -17,14 +17,14 @@ func Logger() tele.MiddlewareFunc {
 			rqID := uuid.NewString()
 			c.Set("rqID", rqID)
 
-			slog.Info(
+			slog.Debug(
 				"start request",
 				slog.String("rqID", rqID),
-				slog.Any("update", c.Update()),
+				// slog.Any("update", c.Update()),
 			)
 
 			defer func() {
-				slog.Info(
+				slog.Debug(
 					"request finished",
 					slog.String("rqID", rqID),
 					slog.String("request duration", fmt.Sprintf("%.2fs", time.Since(now).Seconds())),
