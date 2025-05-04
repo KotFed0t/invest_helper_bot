@@ -4,9 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
+	"github.com/KotFed0t/invest_helper_bot/internal/model/tg/tgCallback.go"
 	"github.com/KotFed0t/invest_helper_bot/internal/transport/telegram"
 	customMW "github.com/KotFed0t/invest_helper_bot/internal/transport/telegram/middleware"
 	"github.com/KotFed0t/invest_helper_bot/utils"
@@ -56,6 +58,11 @@ func (b *TGBot) Stop() {
 }
 
 func (b *TGBot) setupRoutes() {
+	// commands
+	b.bot.Handle("/start", b.ctrl.Start)
+	b.bot.Handle("/create_stocks_portfolio", b.ctrl.InitStocksPortfolioCreation)
+
+	// text
 	b.bot.Handle(tele.OnText, func(c tele.Context) error {
 		// получение сесии и выбор метода контроллера на основе шага пользователя
 		ctx := utils.CreateCtxWithRqID(c)
@@ -70,15 +77,26 @@ func (b *TGBot) setupRoutes() {
 
 		switch chatSession.State {
 		case model.ExpectingPortfolioName:
-			return b.ctrl.CreateStocksPortfolio(c)
+			return b.ctrl.ProcessStocksPortfolioCreation(c)
+		case model.ExpectingTicker:
+			return b.ctrl.ProcessAddStock(c)
 		default:
 			slog.Error("unexpected chatSession state", slog.String("rqID", rqID), slog.Any("state", chatSession.State))
 			return c.Send("сначала введите одну из команд")
 		}
 	})
 
-	b.bot.Handle("/start", b.ctrl.Start)
+	// callbacks
+	b.bot.Handle(tele.OnCallback, func(c tele.Context) error {
+		callbackBtnText := strings.TrimPrefix(c.Callback().Data, "\f")
 
-	b.bot.Handle("/create_stocks_portfolio", b.ctrl.StartStocksPortfolioCreation)
+		switch callbackBtnText {
+		case tgCallback.AddStock:
+			return b.ctrl.InitAddStock(c)
+		default:
+			return c.Send("callback не опознан")
+			// тут уже можно проверять на hasPrefix
+		}
+	})
 
 }

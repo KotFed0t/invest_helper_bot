@@ -23,5 +23,5 @@ type StockInfo struct {
 	Lotsize    int
 	CurrencyID string
 	Status     bool
-	LastPrice  decimal.Decimal
+	Price      decimal.Decimal
 }

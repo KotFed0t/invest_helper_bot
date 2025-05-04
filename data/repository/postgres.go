@@ -84,9 +84,9 @@ func (r *Postgres) RegUser(ctx context.Context, chatID int64) (userID int64, err
 	return userID, nil
 }
 
-func (r *Postgres) CreateStocksPortfolio(ctx context.Context, portfolioName string, userID int64) (err error) {
+func (r *Postgres) CreateStocksPortfolio(ctx context.Context, portfolioName string, userID int64) (portfolioID int64, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
-	query := `INSERT INTO portfolios(name, user_id) VALUES($1, $2)`
+	query := `INSERT INTO portfolios(name, user_id) VALUES($1, $2) RETURNING portfolio_id`
 
 	slog.Debug("CreateStocksPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
 	defer func() {
@@ -96,13 +96,13 @@ func (r *Postgres) CreateStocksPortfolio(ctx context.Context, portfolioName stri
 			slog.Debug("CreateStocksPortfolio completed", slog.String("rqID", rqID))
 		}
 	}()
-
-	_, err = r.db.ExecContext(ctx, query, portfolioName, userID)
+	
+	err = r.db.QueryRowContext(ctx, query, portfolioName, userID).Scan(&portfolioID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return nil
+	return portfolioID, nil
 }
 
 func (r *Postgres) GetUserID(ctx context.Context, chatID int64) (userID int64, err error) {

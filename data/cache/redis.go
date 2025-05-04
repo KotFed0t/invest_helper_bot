@@ -62,8 +62,8 @@ func (r *RedisCache) SetStocks(ctx context.Context, stocks []moexModel.StockInfo
 
 func (r *RedisCache) GetStock(ctx context.Context, ticker string) (moexModel.StockInfo, error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
-	slog.Debug("start GetStock", slog.String("rqID", rqID))
-	
+	slog.Debug("GetStock start", slog.String("rqID", rqID))
+
 	res, err := r.redis.Get(ctx, ticker).Result()
 	if err != nil {
 		slog.Error("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", ticker))
@@ -81,6 +81,8 @@ func (r *RedisCache) GetStock(ctx context.Context, ticker string) (moexModel.Sto
 		)
 		return moexModel.StockInfo{}, errors.New("can't unmarshall stock")
 	}
+
+	slog.Debug("GetStock finished", slog.String("rqID", rqID))
 
 	return stockInfo, nil
 }
