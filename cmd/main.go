@@ -80,7 +80,7 @@ func setupLogger(cfg *config.Config) {
 func initialFillCache(ctx context.Context, moexApiClient *moexApi.MoexApi, redisCache *cache.RedisCache) {
 	slog.Info("start initial cache fiilling")
 
-	stocksInfo, err := moexApiClient.GetStocsInfo(ctx)
+	stocksInfo, err := moexApiClient.GetAllStocsInfo(ctx)
 	if err != nil {
 		slog.Error("initialFillCache failed on GetStocsInfo", slog.String("err", err.Error()))
 		return

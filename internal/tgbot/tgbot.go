@@ -75,13 +75,17 @@ func (b *TGBot) setupRoutes() {
 
 		c.Set("session", chatSession)
 
-		switch chatSession.State {
+		switch chatSession.Action {
 		case model.ExpectingPortfolioName:
 			return b.ctrl.ProcessStocksPortfolioCreation(c)
 		case model.ExpectingTicker:
 			return b.ctrl.ProcessAddStock(c)
+		case model.ExpectingWeight:
+			return b.ctrl.ProcessChangeWeight(c)
+		case model.ExpectingBuyStockQuantity:
+			return b.ctrl.ProcessBuyStock(c)
 		default:
-			slog.Error("unexpected chatSession state", slog.String("rqID", rqID), slog.Any("state", chatSession.State))
+			slog.Error("unexpected chatSession action", slog.String("rqID", rqID), slog.Any("state", chatSession.Action))
 			return c.Send("сначала введите одну из команд")
 		}
 	})
@@ -93,6 +97,14 @@ func (b *TGBot) setupRoutes() {
 		switch callbackBtnText {
 		case tgCallback.AddStock:
 			return b.ctrl.InitAddStock(c)
+		case tgCallback.ChangeWeight:
+			return b.ctrl.InitChangeWeight(c)
+		case tgCallback.BuyStock:
+			return b.ctrl.InitBuyStock(c)
+		case tgCallback.SaveStockChanges:
+			return b.ctrl.SaveStockChanges(c)
+		case tgCallback.AddStockToPortfolio:
+			return b.ctrl.ProcessAddStockToPortfolio(c)
 		default:
 			return c.Send("callback не опознан")
 			// тут уже можно проверять на hasPrefix

@@ -2,15 +2,19 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
+	"github.com/KotFed0t/invest_helper_bot/internal/model/dbModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver
 	"github.com/jmoiron/sqlx"
+	"github.com/shopspring/decimal"
 )
 
 type Postgres struct {
@@ -96,7 +100,7 @@ func (r *Postgres) CreateStocksPortfolio(ctx context.Context, portfolioName stri
 			slog.Debug("CreateStocksPortfolio completed", slog.String("rqID", rqID))
 		}
 	}()
-	
+
 	err = r.db.QueryRowContext(ctx, query, portfolioName, userID).Scan(&portfolioID)
 	if err != nil {
 		return 0, err
@@ -124,4 +128,122 @@ func (r *Postgres) GetUserID(ctx context.Context, chatID int64) (userID int64, e
 	}
 
 	return userID, nil
+}
+
+func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock dbModel.Stock, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	query := `
+		SELECT portfolio_id, ticker, weight, user_id, quantity
+		FROM stocks_portfolio_details 
+		WHERE portfolio_id = $1
+		AND ticker = $2
+		`
+
+	slog.Debug("GetStockFromPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
+	defer func() {
+		if err != nil {
+			slog.Error("GetStockFromPortfolio failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetStockFromPortfolio completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	err = r.db.QueryRowxContext(ctx, query, portfolioID, ticker).StructScan(&stock)
+	if err != nil {
+		return dbModel.Stock{}, err
+	}
+
+	return stock, nil
+}
+
+func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []dbModel.Stock, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	query := `
+		SELECT portfolio_id, ticker, weight, user_id, quantity
+		FROM stocks_portfolio_details 
+		WHERE portfolio_id = $1
+		`
+
+	slog.Debug("GetStocksFromPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
+	defer func() {
+		if err != nil {
+			slog.Error("GetStocksFromPortfolio failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetStocksFromPortfolio completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	rows, err := r.db.QueryxContext(ctx, query, portfolioID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var stock dbModel.Stock
+		err = rows.StructScan(&stock)
+		if err != nil {
+			return nil, err
+		}
+		stocks = append(stocks, stock)
+	}
+
+	return stocks, nil
+}
+
+func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64, ticker string, userID int64) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	query := `INSERT INTO stocks_portfolio_details(portfolio_id, ticker, user_id) VALUES($1, $2, $3)`
+
+	slog.Debug("InsertStockToPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
+	defer func() {
+		if err != nil {
+			slog.Error("InsertStockToPortfolio failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("InsertStockToPortfolio completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker, userID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" { // unique_violation
+				return ErrAlreadyExists
+			}
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	query := `
+		UPDATE stocks_portfolio_details
+        SET 
+            quantity = quantity + COALESCE($1, 0),
+            weight = COALESCE($2, weight)
+        WHERE 
+			portfolio_id = $3
+			AND ticker = $4
+	`
+
+	slog.Debug("Postgres.UpdatePortfolioStock start", slog.String("rqID", rqID), slog.String("query", query))
+	defer func() {
+		if err != nil {
+			slog.Error("Postgres.UpdatePortfolioStock failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("Postgres.UpdatePortfolioStock completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, quantity, weight, portfolioID, ticker)
+	if err != nil {
+		return err
+	}
+	
+	return nil
 }

@@ -12,10 +12,9 @@ CREATE TABLE IF NOT EXISTS portfolios(
 CREATE TABLE IF NOT EXISTS stocks_portfolio_details(
     portfolio_id BIGINT references portfolios(portfolio_id),
     ticker TEXT NOT NULL,
-    shortname TEXT NOT NULL,
-    weight DECIMAL(5, 2) NOT NULL,
+    weight DECIMAL(5, 2) NOT NULL DEFAULT 0,
     user_id BIGINT references users(user_id),
-    quantity INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
     CONSTRAINT unique_portfolio_ticker UNIQUE (portfolio_id, ticker)
 );
 

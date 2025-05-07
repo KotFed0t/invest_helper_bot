@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
+	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/redis/go-redis/v9"
@@ -38,16 +41,7 @@ func (r *RedisCache) SetStocks(ctx context.Context, stocks []moexModel.StockInfo
 			return errors.New("can't marshall stock")
 		}
 
-		_, err = pipe.Set(ctx, stock.Ticker, stockJson, r.cfg.Cache.StocksExpiration).Result()
-		if err != nil {
-			slog.Error(
-				"failed on pipe.Set",
-				slog.String("rqID", rqID),
-				slog.String("err", err.Error()),
-				slog.Any("stock", stock),
-			)
-			return err
-		}
+		_ = pipe.Set(ctx, stock.Ticker, stockJson, r.cfg.Cache.StocksExpiration)
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -60,9 +54,9 @@ func (r *RedisCache) SetStocks(ctx context.Context, stocks []moexModel.StockInfo
 	return nil
 }
 
-func (r *RedisCache) GetStock(ctx context.Context, ticker string) (moexModel.StockInfo, error) {
+func (r *RedisCache) GetStockInfo(ctx context.Context, ticker string) (moexModel.StockInfo, error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
-	slog.Debug("GetStock start", slog.String("rqID", rqID))
+	slog.Debug("GetStockInfo start", slog.String("rqID", rqID))
 
 	res, err := r.redis.Get(ctx, ticker).Result()
 	if err != nil {
@@ -74,7 +68,7 @@ func (r *RedisCache) GetStock(ctx context.Context, ticker string) (moexModel.Sto
 	err = json.Unmarshal([]byte(res), &stockInfo)
 	if err != nil {
 		slog.Error(
-			"can't unmarshall stock in GetStock",
+			"can't unmarshall stock in GetStockInfo",
 			slog.String("rqID", rqID),
 			slog.String("err", err.Error()),
 			slog.String("resultFromRedis", res),
@@ -82,7 +76,187 @@ func (r *RedisCache) GetStock(ctx context.Context, ticker string) (moexModel.Sto
 		return moexModel.StockInfo{}, errors.New("can't unmarshall stock")
 	}
 
-	slog.Debug("GetStock finished", slog.String("rqID", rqID))
+	slog.Debug("GetStockInfo finished", slog.String("rqID", rqID))
 
 	return stockInfo, nil
+}
+
+func (r *RedisCache) GetStocksInfo(ctx context.Context, tickers []string) (map[string]moexModel.StockInfo, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("GetStocksInfo start", slog.String("rqID", rqID))
+
+	values, err := r.redis.MGet(ctx, tickers...).Result()
+	if err != nil {
+		slog.Error("failed on redis.MGet", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("tickers", tickers))
+		return nil, err
+	}
+
+	m := make(map[string]moexModel.StockInfo, len(values))
+	for _, value := range values {
+		if value == nil {
+			return nil, ErrNotFound
+		}
+
+		jsonData, ok := value.(string)
+		if !ok {
+			return nil, errors.New("can't cast values from redis to string")
+		}
+
+		stockInfo := moexModel.StockInfo{}
+		err = json.Unmarshal([]byte(jsonData), &stockInfo)
+		if err != nil {
+			return nil, errors.New("can't unmarshal json to stockInfo")
+		}
+
+		m[stockInfo.Ticker] = stockInfo
+	}
+
+	slog.Debug("GetStocksInfo finished", slog.String("rqID", rqID))
+
+	return m, nil
+}
+
+func (r *RedisCache) GetPortfolioStock(ctx context.Context, ticker string, portfolioID int64) (model.Stock, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("GetPortfolioStock start", slog.String("rqID", rqID))
+
+	key := r.createPortfolioStockKey(portfolioID, ticker)
+
+	res, err := r.redis.Get(ctx, key).Result()
+	if err != nil {
+		slog.Error("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", ticker))
+		return model.Stock{}, err
+	}
+
+	stock := model.Stock{}
+	err = json.Unmarshal([]byte(res), &stock)
+	if err != nil {
+		slog.Error(
+			"can't unmarshall stock in GetPortfolioStock",
+			slog.String("rqID", rqID),
+			slog.String("err", err.Error()),
+			slog.String("resultFromRedis", res),
+		)
+		return model.Stock{}, errors.New("can't unmarshall stock")
+	}
+
+	slog.Debug("GetPortfolioStock finished", slog.String("rqID", rqID))
+
+	return stock, nil
+}
+
+func (r *RedisCache) SetPortfolioStock(ctx context.Context, portfolioID int64, stock model.Stock) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("SetPortfolioStock start", slog.String("rqID", rqID))
+
+	key := r.createPortfolioStockKey(portfolioID, stock.Ticker)
+
+	jsonData, err := json.Marshal(stock)
+	if err != nil {
+		slog.Error(
+			"can't marshall stock in SetPortfolioStock",
+			slog.String("rqID", rqID),
+			slog.String("err", err.Error()),
+			slog.Any("stock", stock),
+		)
+		return errors.New("can't marshall stock")
+	}
+
+	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.SessionExpiration).Result()
+	if err != nil {
+		slog.Error("failed on redis.Set", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("stock", stock))
+		return err
+	}
+
+	slog.Debug("SetPortfolioStock finished", slog.String("rqID", rqID))
+
+	return nil
+}
+
+func (r *RedisCache) GetPortfolioSummary(ctx context.Context, portfolioID int64) (model.PortfolioSummary, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("GetPortfolioSummary start", slog.String("rqID", rqID))
+
+	key := fmt.Sprintf("portfolio:%s:summary", strconv.FormatInt(portfolioID, 10))
+
+	res, err := r.redis.Get(ctx, key).Result()
+	if err != nil {
+		slog.Error("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", key))
+		return model.PortfolioSummary{}, err
+	}
+
+	summary := model.PortfolioSummary{}
+	err = json.Unmarshal([]byte(res), &summary)
+	if err != nil {
+		slog.Error(
+			"can't unmarshall summary in GetPortfolioSummary",
+			slog.String("rqID", rqID),
+			slog.String("err", err.Error()),
+			slog.String("resultFromRedis", res),
+		)
+		return model.PortfolioSummary{}, errors.New("can't unmarshall summary")
+	}
+
+	slog.Debug("GetPortfolioSummary finished", slog.String("rqID", rqID))
+
+	return summary, nil
+}
+
+func (r *RedisCache) SetPortfolioSummary(ctx context.Context, portfolioID int64, summary model.PortfolioSummary) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("RedisCache.SetPortfolioSummary start", slog.String("rqID", rqID), slog.Any("summary", summary))
+
+	key := r.createPortfolioSummaryKey(portfolioID)
+
+	jsonData, err := json.Marshal(summary)
+	if err != nil {
+		slog.Error(
+			"can't marshall summary in RedisCache.SetPortfolioSummary",
+			slog.String("rqID", rqID),
+			slog.String("err", err.Error()),
+			slog.Any("summary", summary),
+		)
+		return errors.New("can't marshall summary")
+	}
+
+	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.SessionExpiration).Result()
+	if err != nil {
+		slog.Error("failed on redis.Set", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("summary", summary))
+		return err
+	}
+
+	slog.Debug("RedisCache.SetPortfolioSummary finished", slog.String("rqID", rqID))
+
+	return nil
+}
+
+func (r *RedisCache) createPortfolioSummaryKey(portfolioID int64) string {
+	return fmt.Sprintf("portfolio:%s:summary", strconv.FormatInt(portfolioID, 10))
+}
+
+func (r *RedisCache) createPortfolioStockKey(portfolioID int64, ticker string) string {
+	return fmt.Sprintf("portfolio:%s:ticker:%s", strconv.FormatInt(portfolioID, 10), ticker)
+}
+
+func (r *RedisCache) FlushPortfolioCache(ctx context.Context, portfolioID int64) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("RedisCache.FlushPortfolioCache start", slog.String("rqID", rqID))
+
+	pattern := fmt.Sprintf("portfolio:%s*", strconv.FormatInt(portfolioID, 10))
+
+	keys, err := r.redis.Keys(ctx, pattern).Result()
+	if err != nil {
+		slog.Error("failed on redis.Keys", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		return err
+	}
+	slog.Debug("got keys from redis.Keys", slog.String("rqID", rqID), slog.Any("keys", keys))
+
+	_, err = r.redis.Del(ctx, keys...).Result()
+	if err != nil {
+		slog.Error("failed on redis.Del", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("keys", keys))
+	}
+
+	slog.Debug("RedisCache.FlushPortfolioCache completed", slog.String("rqID", rqID))
+
+	return nil
 }

@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
+	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/tg/tgCallback.go"
+	"github.com/shopspring/decimal"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -16,8 +18,8 @@ func PortfolioDetailsResponse(portfolio model.Portfolio) (text string, markup *t
 
 	// Заголовок портфеля
 	sb.WriteString(fmt.Sprintf("📊 Портфель: %s\n", portfolio.Name))
-	sb.WriteString(fmt.Sprintf("💰 Баланс: %.0f ₽\n", portfolio.TotalBalance))
-	sb.WriteString(fmt.Sprintf(" - Текущий вес %.1f%%\n\n", portfolio.TotalWeight))
+	sb.WriteString(fmt.Sprintf("💰 Баланс: %s ₽\n", portfolio.TotalBalance.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf(" - Текущий вес %s\n", portfolio.TotalWeight.StringFixed(2)))
 
 	// Состав портфеля
 	sb.WriteString("📋 Состав портфеля:\n\n")
@@ -28,16 +30,14 @@ func PortfolioDetailsResponse(portfolio model.Portfolio) (text string, markup *t
 
 		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.AddStock+stock.Ticker))
 
-		sb.WriteString(fmt.Sprintf("%s **%s (%s)**\n", emoji, stock.Ticker, stock.Shortname))
-		sb.WriteString(fmt.Sprintf("   ▸ Вес: **%.1f%%**\n", stock.ActualWeight))
-
-		sb.WriteString(fmt.Sprintf("   ▸ Эталонный вес: %.1f%%\n", stock.TargetWeight))
-
-		sb.WriteString(fmt.Sprintf("   ▸ Кол-во: **%d шт.**\n", stock.Quantity))
-
-		sb.WriteString(fmt.Sprintf("   ▸ Цена акции: %.0f ₽\n", stock.Price))
-
-		sb.WriteString(fmt.Sprintf("   ▸ Стоимость: **%.0f ₽**\n\n", stock.TotalPrice))
+		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", emoji, stock.Ticker, stock.Shortname))
+		sb.WriteString(fmt.Sprintf("▸ Вес: %s\n", stock.ActualWeight.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ целевой вес: %s\n", stock.TargetWeight.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ Кол-во: %d шт.\n", stock.Quantity))
+		sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n", stock.TotalPrice.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ Размер лота: %d\n", stock.Lotsize))
+		sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
 	}
 
 	paginationBtns := make([]tele.Btn, 0, 2)
@@ -54,6 +54,98 @@ func PortfolioDetailsResponse(portfolio model.Portfolio) (text string, markup *t
 		markup.Row(addStockBtn),
 		markup.Row(stockBtns...),
 		markup.Row(paginationBtns...),
+	)
+
+	return sb.String(), markup
+}
+
+func StockNotFoundMarkup() (markup *tele.ReplyMarkup) {
+	markup = &tele.ReplyMarkup{}
+	addStockBtn := markup.Data("ввести другой тикер", tgCallback.AddStock)
+	markup.Inline(markup.Row(addStockBtn))
+	return markup
+}
+
+func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (text string, markup *tele.ReplyMarkup) {
+	markup = &tele.ReplyMarkup{}
+	sb := strings.Builder{}
+
+	sb.WriteString(fmt.Sprintf("%s (%s)\n", stock.Ticker, stock.Shortname))
+	sb.WriteString(fmt.Sprintf("▸ Вес: %s\n", stock.ActualWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Целевой вес: %s\n", stock.TargetWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Кол-во: %d шт.\n", stock.Quantity))
+	sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n", stock.TotalPrice.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Размер лота: %d\n", stock.Lotsize))
+	sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
+
+	row1 := make([]tele.Btn, 0, 3)
+
+	if stock.Quantity > 0 {
+		sellStockBtn := markup.Data("продать", "TODO")
+		row1 = append(row1, sellStockBtn)
+	}
+
+	buyStockBtn := markup.Data("купить", tgCallback.BuyStock)
+	row1 = append(row1, buyStockBtn)
+
+	changeWeightStockBtn := markup.Data("изменить вес", tgCallback.ChangeWeight)
+
+	deleteStockBtn := markup.Data("удалить из портфеля", "TODO")
+
+	row4 := make([]tele.Btn, 0)
+	if stockChanges != nil {
+		sb.WriteString("\nИзменения:\n")
+		if stockChanges.NewTargetWeight != nil {
+			sb.WriteString(fmt.Sprintf("- Новый целевой вес: %s\n", stockChanges.NewTargetWeight.StringFixed(2)))
+		}
+
+		if stockChanges.Quantity != nil {
+			if *stockChanges.Quantity > 0 {
+				sb.WriteString(fmt.Sprintf("- К покупке: %d акции\n", *stockChanges.Quantity))
+			}
+
+			if *stockChanges.Quantity < 0 {
+				sb.WriteString(fmt.Sprintf("- К продаже: %d акции\n", *stockChanges.Quantity))
+			}
+		}
+
+		saveBtn := markup.Data("сохранить изменения", tgCallback.SaveStockChanges)
+		row4 = append(row4, saveBtn)
+	}
+
+	backToPortfolioBtn := markup.Data("назад к портфелю", "TODO")
+
+	markup.Inline(
+		row1,
+		markup.Row(changeWeightStockBtn),
+		markup.Row(deleteStockBtn),
+		markup.Row(backToPortfolioBtn),
+		row4,
+	)
+
+	return sb.String(), markup
+}
+
+func StockAddResponse(stock moexModel.StockInfo) (text string, markup *tele.ReplyMarkup) {
+	markup = &tele.ReplyMarkup{}
+	sb := strings.Builder{}
+
+	sb.WriteString(fmt.Sprintf("%s (%s)\n", stock.Ticker, stock.Shortname))
+	sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Размер лота: %d\n", stock.Lotsize))
+	sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
+
+	addToPortfolioBtn := markup.Data("добавить в портфель", tgCallback.AddStockToPortfolio)
+
+	addAnotherStockBtn := markup.Data("ввести другой тикер", tgCallback.AddStock)
+
+	backToPortfolioBtn := markup.Data("назад к портфелю", "TODO")
+
+	markup.Inline(
+		markup.Row(addToPortfolioBtn),
+		markup.Row(addAnotherStockBtn),
+		markup.Row(backToPortfolioBtn),
 	)
 
 	return sb.String(), markup

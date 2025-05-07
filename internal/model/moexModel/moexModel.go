@@ -1,6 +1,6 @@
 package moexModel
 
-import "github.com/govalues/decimal"
+import "github.com/shopspring/decimal"
 
 type RawStocksInfo struct {
 	Securities Securities `json:"securities"`

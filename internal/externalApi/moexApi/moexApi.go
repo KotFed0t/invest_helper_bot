@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/internal/externalApi"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/go-resty/resty/v2"
-	"github.com/govalues/decimal"
+	"github.com/shopspring/decimal"
 )
 
 type MoexApi struct {
@@ -27,7 +28,7 @@ func New(cfg *config.Config) *MoexApi {
 	return &MoexApi{client: client}
 }
 
-func (a *MoexApi) GetStocsInfo(ctx context.Context) ([]moexModel.StockInfo, error) {
+func (a *MoexApi) getStocsInfo(ctx context.Context, tickers ...string) (moexModel.RawStocksInfo, error) {
 	rqId := utils.GetRequestIDFromCtx(ctx)
 	url := "/iss/engines/stock/markets/shares/boards/TQBR/securities.json"
 	params := map[string]string{
@@ -36,7 +37,11 @@ func (a *MoexApi) GetStocsInfo(ctx context.Context) ([]moexModel.StockInfo, erro
 		"marketdata.columns": "SECID,MARKETPRICE",
 	}
 
-	slog.Debug("start MoexApi.GetStocsInfo request", slog.String("rqID", rqId))
+	if len(tickers) > 0 {
+		params["securities"] = strings.Join(tickers, ",")
+	}
+
+	slog.Debug("start MoexApi.getStocsInfo request", slog.String("rqID", rqId), slog.String("url", url), slog.Any("params", params))
 
 	resp, err := a.client.R().
 		SetHeader("Accept", "application/json").
@@ -45,13 +50,29 @@ func (a *MoexApi) GetStocsInfo(ctx context.Context) ([]moexModel.StockInfo, erro
 
 	if err != nil {
 		slog.Error("error while dialing MoexApi", slog.String("err", err.Error()), slog.String("rqID", rqId))
-		return nil, err
+		return moexModel.RawStocksInfo{}, err
 	}
 
 	rawStocksInfo := moexModel.RawStocksInfo{}
 	err = json.Unmarshal(resp.Body(), &rawStocksInfo)
 	if err != nil {
-		slog.Error("can't unmarshall response into moexModel.StocksInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
+		slog.Error("can't unmarshall response into moexModel.RawStocksInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
+		return moexModel.RawStocksInfo{}, err
+	}
+
+	slog.Debug("MoexApi.getStocsInfo request complete", slog.String("rqID", rqId))
+
+	return rawStocksInfo, nil
+}
+
+func (a *MoexApi) GetAllStocsInfo(ctx context.Context) ([]moexModel.StockInfo, error) {
+	rqId := utils.GetRequestIDFromCtx(ctx)
+
+	slog.Debug("start MoexApi.GetStocsInfo request", slog.String("rqID", rqId))
+
+	rawStocksInfo, err := a.getStocsInfo(ctx)
+	if err != nil {
+		slog.Error("got error from MoexApi.getStocsInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
 		return nil, err
 	}
 
@@ -68,30 +89,12 @@ func (a *MoexApi) GetStocsInfo(ctx context.Context) ([]moexModel.StockInfo, erro
 
 func (a *MoexApi) GetStocInfo(ctx context.Context, ticker string) (moexModel.StockInfo, error) {
 	rqId := utils.GetRequestIDFromCtx(ctx)
-	url := "/iss/engines/stock/markets/shares/boards/TQBR/securities.json"
-	params := map[string]string{
-		"iss.meta":           "off",
-		"securities.columns": "SECID,SHORTNAME,LOTSIZE,CURRENCYID,STATUS",
-		"marketdata.columns": "SECID,MARKETPRICE",
-		"securities":         ticker,
-	}
 
 	slog.Debug("start MoexApi.GetStocInfo request", slog.String("rqID", rqId))
 
-	resp, err := a.client.R().
-		SetHeader("Accept", "application/json").
-		SetQueryParams(params).
-		Get(url)
-
+	rawStocksInfo, err := a.getStocsInfo(ctx, ticker)
 	if err != nil {
-		slog.Error("error while dialing MoexApi", slog.String("err", err.Error()), slog.String("rqID", rqId))
-		return moexModel.StockInfo{}, err
-	}
-
-	rawStocksInfo := moexModel.RawStocksInfo{}
-	err = json.Unmarshal(resp.Body(), &rawStocksInfo)
-	if err != nil {
-		slog.Error("can't unmarshall response into moexModel.StocksInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
+		slog.Error("got error from MoexApi.getStocsInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
 		return moexModel.StockInfo{}, err
 	}
 
@@ -104,6 +107,28 @@ func (a *MoexApi) GetStocInfo(ctx context.Context, ticker string) (moexModel.Sto
 	slog.Debug("MoexApi.GetStocInfo request complete", slog.String("rqID", rqId))
 
 	return res, nil
+}
+
+func (a *MoexApi) GetStocsInfo(ctx context.Context, tickers []string) (map[string]moexModel.StockInfo, error) {
+	rqId := utils.GetRequestIDFromCtx(ctx)
+	
+	slog.Debug("start MoexApi.GetStocsInfo request", slog.String("rqID", rqId))
+
+	rawStocksInfo, err := a.getStocsInfo(ctx, tickers...)
+	if err != nil {
+		slog.Error("got error from MoexApi.getStocsInfo", slog.String("err", err.Error()), slog.String("rqID", rqId))
+		return nil, err
+	}
+
+	stocksInfoMap, err := a.parseRawStocksInfoToMap(rawStocksInfo)
+	if err != nil {
+		slog.Error("can't parse raw data to map", slog.String("err", err.Error()), slog.String("rqID", rqId))
+		return nil, err
+	}
+
+	slog.Debug("MoexApi.GetStocsInfo request complete", slog.String("rqID", rqId))
+
+	return stocksInfoMap, nil
 }
 
 func (a *MoexApi) parseRawStocksInfoToSlice(rawStocksInfo moexModel.RawStocksInfo) ([]moexModel.StockInfo, error) {
@@ -187,11 +212,7 @@ func (a *MoexApi) handleRawStocksInfo(rawStocksInfo moexModel.RawStocksInfo, han
 					var price float64
 					price, ok = rawStocksInfo.Marketdata.Data[i][j].(float64)
 					if ok {
-						d, err := decimal.NewFromFloat64(price)
-						if err != nil {
-							return fmt.Errorf("failed create decimal from marketprice value = %f, err: %w", price, err)
-						}
-						stockInfo.Price = d
+						stockInfo.Price = decimal.NewFromFloat(price)
 					}
 				}
 			default:

@@ -1,6 +1,6 @@
 package model
 
-import "github.com/govalues/decimal"
+import "github.com/shopspring/decimal"
 
 type Stock struct {
 	Ticker       string
@@ -12,4 +12,9 @@ type Stock struct {
 	Quantity     int
 	Price        decimal.Decimal
 	TotalPrice   decimal.Decimal
+}
+
+type StockChanges struct {
+	Quantity        *int
+	NewTargetWeight *decimal.Decimal
 }
