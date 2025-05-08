@@ -8,6 +8,8 @@ const (
 	ExpectingTicker
 	ExpectingWeight
 	ExpectingBuyStockQuantity
+	ExpectingSellStockQuantity
+	ExpectingChangePrice
 )
 
 type Session struct {

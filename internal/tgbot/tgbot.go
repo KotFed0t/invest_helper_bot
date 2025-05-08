@@ -84,6 +84,10 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.ProcessChangeWeight(c)
 		case model.ExpectingBuyStockQuantity:
 			return b.ctrl.ProcessBuyStock(c)
+		case model.ExpectingSellStockQuantity:
+			return b.ctrl.ProcessSellStock(c)
+		case model.ExpectingChangePrice:
+			return b.ctrl.ProcessChangePrice(c)
 		default:
 			slog.Error("unexpected chatSession action", slog.String("rqID", rqID), slog.Any("state", chatSession.Action))
 			return c.Send("сначала введите одну из команд")
@@ -101,6 +105,10 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.InitChangeWeight(c)
 		case tgCallback.BuyStock:
 			return b.ctrl.InitBuyStock(c)
+		case tgCallback.SellStock:
+			return b.ctrl.InitSellStock(c)
+		case tgCallback.ChangePrice:
+			return b.ctrl.InitChangePrice(c)
 		case tgCallback.SaveStockChanges:
 			return b.ctrl.SaveStockChanges(c)
 		case tgCallback.AddStockToPortfolio:

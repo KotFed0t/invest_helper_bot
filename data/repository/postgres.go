@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
+	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/dbModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
@@ -245,5 +246,47 @@ func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, 
 		return err
 	}
 	
+	return nil
+}
+
+func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioID int64, stockOperation model.StockOperation) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.InsertStockOperationToHistory"
+	query := `
+		INSERT INTO stocks_operations_history(portfolio_id, ticker, shortname, quantity, price, total_price, currency)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+
+	slog.Debug(
+		"InsertStockOperationToHistory start",
+		slog.String("rqID", rqID),
+		slog.String("op", op),
+		slog.Int64("portolioID", portfolioID),
+		slog.Any("stockOperation", stockOperation),
+		slog.String("query", query),
+	)
+	defer func() {
+		if err != nil {
+			slog.Error("InsertStockOperationToHistory failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("InsertStockOperationToHistory completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+	
+	_, err = r.db.ExecContext(
+		ctx,
+		query,
+		portfolioID,
+		stockOperation.Ticker,
+		stockOperation.Shortname,
+		stockOperation.Quantity,
+		stockOperation.Price,
+		stockOperation.TotalPrice,
+		stockOperation.Currency,
+	)
+	
+	if err != nil {
+		return err
+	}
 	return nil
 }

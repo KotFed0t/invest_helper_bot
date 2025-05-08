@@ -71,18 +71,18 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 	sb := strings.Builder{}
 
 	sb.WriteString(fmt.Sprintf("%s (%s)\n", stock.Ticker, stock.Shortname))
-	sb.WriteString(fmt.Sprintf("▸ Вес: %s\n", stock.ActualWeight.StringFixed(2)))
-	sb.WriteString(fmt.Sprintf("▸ Целевой вес: %s\n", stock.TargetWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Вес: %s %%\n", stock.ActualWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Целевой вес: %s %%\n", stock.TargetWeight.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ Кол-во: %d шт.\n", stock.Quantity))
 	sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n", stock.TotalPrice.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ Размер лота: %d\n", stock.Lotsize))
 	sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
 
-	row1 := make([]tele.Btn, 0, 3)
+	row1 := make([]tele.Btn, 0, 2)
 
 	if stock.Quantity > 0 {
-		sellStockBtn := markup.Data("продать", "TODO")
+		sellStockBtn := markup.Data("продать", tgCallback.SellStock)
 		row1 = append(row1, sellStockBtn)
 	}
 
@@ -93,35 +93,67 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 
 	deleteStockBtn := markup.Data("удалить из портфеля", "TODO")
 
-	row4 := make([]tele.Btn, 0)
+	var changePriceBtn tele.Btn
+	var saveBtn tele.Btn
+
 	if stockChanges != nil {
 		sb.WriteString("\nИзменения:\n")
 		if stockChanges.NewTargetWeight != nil {
-			sb.WriteString(fmt.Sprintf("- Новый целевой вес: %s\n", stockChanges.NewTargetWeight.StringFixed(2)))
+			sb.WriteString(fmt.Sprintf("▸ Новый целевой вес: %s %%\n", stockChanges.NewTargetWeight.StringFixed(2)))
 		}
 
 		if stockChanges.Quantity != nil {
+			var operation string
+			if *stockChanges.Quantity < 0 {
+				operation = "продажи"
+			} else {
+				operation = "покупки"
+			}
+
+			changePriceBtn = markup.Data(fmt.Sprintf("изменить цену %s", operation), tgCallback.ChangePrice)
+
 			if *stockChanges.Quantity > 0 {
-				sb.WriteString(fmt.Sprintf("- К покупке: %d акции\n", *stockChanges.Quantity))
+				sb.WriteString(fmt.Sprintf("▸ Акций к покупке: %d шт.\n", *stockChanges.Quantity))
 			}
 
 			if *stockChanges.Quantity < 0 {
-				sb.WriteString(fmt.Sprintf("- К продаже: %d акции\n", *stockChanges.Quantity))
+				sb.WriteString(fmt.Sprintf("▸ Акций к продаже: %d шт.\n", *stockChanges.Quantity*-1))
 			}
+			
+
+			var stockPrice, totalSum string
+
+			if stockChanges.CustomPrice != nil {
+				stockPrice = stockChanges.CustomPrice.StringFixed(2)
+
+				totalSum = stockChanges.CustomPrice.
+					Mul(decimal.NewFromInt(int64(*stockChanges.Quantity))).
+					Abs().
+					StringFixed(2)
+			} else {
+				stockPrice = stock.Price.StringFixed(2)
+
+				totalSum = stock.Price.
+					Mul(decimal.NewFromInt(int64(*stockChanges.Quantity))).
+					Abs().
+					StringFixed(2)
+			}
+			sb.WriteString(fmt.Sprintf("▸ Цена за акцию: %s ₽\n", stockPrice))
+			sb.WriteString(fmt.Sprintf("▸ Сумма %s: %s ₽\n", operation, totalSum))
 		}
 
-		saveBtn := markup.Data("сохранить изменения", tgCallback.SaveStockChanges)
-		row4 = append(row4, saveBtn)
+		saveBtn = markup.Data("сохранить изменения", tgCallback.SaveStockChanges)
 	}
 
 	backToPortfolioBtn := markup.Data("назад к портфелю", "TODO")
 
 	markup.Inline(
 		row1,
+		markup.Row(changePriceBtn),
 		markup.Row(changeWeightStockBtn),
 		markup.Row(deleteStockBtn),
 		markup.Row(backToPortfolioBtn),
-		row4,
+		markup.Row(saveBtn),
 	)
 
 	return sb.String(), markup

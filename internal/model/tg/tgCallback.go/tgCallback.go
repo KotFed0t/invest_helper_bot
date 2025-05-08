@@ -6,6 +6,8 @@ const (
 	BackToPortolioFromAddStock string = "back_to_portfolio_from_addstock"
 	ChangeWeight               string = "change_weight"
 	BuyStock                   string = "buy_stock"
+	SellStock                  string = "sell_stock"
+	ChangePrice                string = "change_price"
 	SaveStockChanges           string = "save_stock_changes"
 	AddStockToPortfolio        string = "add_stock_to_portfolio" // добавить конкретный тикер в портфель
 

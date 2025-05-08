@@ -1,6 +1,8 @@
 package dbModel
 
 import (
+	"time"
+
 	"github.com/shopspring/decimal"
 )
 
@@ -9,5 +11,16 @@ type Stock struct {
 	Ticker      string          `db:"ticker"`
 	Weight      decimal.Decimal `db:"weight"`
 	UserID      int64           `db:"user_id"`
-	Quantity    int64           `db:"quantity"`
+	Quantity    int             `db:"quantity"`
+}
+
+type StockOperation struct {
+	PortfolioID int64           `db:"portfolio_id"`
+	Ticker      string          `db:"ticker"`
+	Shortname   string          `db:"shortname"`
+	Quantity    int             `db:"quantity"`
+	Price       decimal.Decimal `db:"price"`
+	TotalPrice  decimal.Decimal `db:"total_price"`
+	Currency    string          `db:"currency"`
+	CreatedAt   time.Time       `db:"dt_create"`
 }

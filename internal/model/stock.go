@@ -17,4 +17,14 @@ type Stock struct {
 type StockChanges struct {
 	Quantity        *int
 	NewTargetWeight *decimal.Decimal
+	CustomPrice     *decimal.Decimal
+}
+
+type StockOperation struct {
+	Ticker     string
+	Shortname  string
+	Quantity   int
+	Price      decimal.Decimal
+	TotalPrice decimal.Decimal
+	Currency   string
 }
