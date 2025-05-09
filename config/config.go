@@ -17,6 +17,7 @@ type Config struct {
 	API               API
 	Cache             Cache
 	SessionExpiration time.Duration `env:"SESSION_EXPIRATION"`
+	StocksPerPage     int           `env:"STOCKS_PER_PAGE"`
 }
 
 type Postgres struct {

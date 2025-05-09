@@ -162,7 +162,7 @@ func (r *RedisCache) SetPortfolioStock(ctx context.Context, portfolioID int64, s
 		return errors.New("can't marshall stock")
 	}
 
-	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.SessionExpiration).Result()
+	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.Cache.StocksExpiration).Result()
 	if err != nil {
 		slog.Error("failed on redis.Set", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("stock", stock))
 		return err
@@ -177,7 +177,7 @@ func (r *RedisCache) GetPortfolioSummary(ctx context.Context, portfolioID int64)
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	slog.Debug("GetPortfolioSummary start", slog.String("rqID", rqID))
 
-	key := fmt.Sprintf("portfolio:%s:summary", strconv.FormatInt(portfolioID, 10))
+	key := r.createPortfolioSummaryKey(portfolioID)
 
 	res, err := r.redis.Get(ctx, key).Result()
 	if err != nil {
@@ -219,7 +219,7 @@ func (r *RedisCache) SetPortfolioSummary(ctx context.Context, portfolioID int64,
 		return errors.New("can't marshall summary")
 	}
 
-	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.SessionExpiration).Result()
+	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.Cache.StocksExpiration).Result()
 	if err != nil {
 		slog.Error("failed on redis.Set", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("summary", summary))
 		return err
@@ -236,6 +236,49 @@ func (r *RedisCache) createPortfolioSummaryKey(portfolioID int64) string {
 
 func (r *RedisCache) createPortfolioStockKey(portfolioID int64, ticker string) string {
 	return fmt.Sprintf("portfolio:%s:ticker:%s", strconv.FormatInt(portfolioID, 10), ticker)
+}
+
+func (r *RedisCache) createPortfolioStocksPage(portfolioID int64, page int) string {
+	return fmt.Sprintf("portfolio:%s:page:%s", strconv.FormatInt(portfolioID, 10), strconv.Itoa(page))
+}
+
+func (r *RedisCache) FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("RedisCache.FlushPortfolioSummaryCache start", slog.String("rqID", rqID))
+
+	key := r.createPortfolioSummaryKey(portfolioID)
+
+	_, err := r.redis.Del(ctx, key).Result()
+	if err != nil {
+		slog.Error("failed on redis.Del", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("key", key))
+	}
+
+	slog.Debug("RedisCache.FlushPortfolioSummaryCache completed", slog.String("rqID", rqID))
+
+	return nil
+}
+
+func (r *RedisCache) FlushPortfolioStocksPagesCache(ctx context.Context, portfolioID int64) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("RedisCache.FlushPortfolioCache start", slog.String("rqID", rqID))
+
+	pattern := fmt.Sprintf("portfolio:%s:page:*", strconv.FormatInt(portfolioID, 10))
+
+	keys, err := r.redis.Keys(ctx, pattern).Result()
+	if err != nil {
+		slog.Error("failed on redis.Keys", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		return err
+	}
+	slog.Debug("got keys from redis.Keys", slog.String("rqID", rqID), slog.Any("keys", keys))
+
+	_, err = r.redis.Del(ctx, keys...).Result()
+	if err != nil {
+		slog.Error("failed on redis.Del", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("keys", keys))
+	}
+
+	slog.Debug("RedisCache.FlushPortfolioStocksPages completed", slog.String("rqID", rqID))
+
+	return nil
 }
 
 func (r *RedisCache) FlushPortfolioCache(ctx context.Context, portfolioID int64) error {
@@ -257,6 +300,71 @@ func (r *RedisCache) FlushPortfolioCache(ctx context.Context, portfolioID int64)
 	}
 
 	slog.Debug("RedisCache.FlushPortfolioCache completed", slog.String("rqID", rqID))
+
+	return nil
+}
+
+func (r *RedisCache) GetPortfolioStocksForPage(ctx context.Context, portfolioID int64, page int) ([]model.Stock, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "RedisCache.GetPortfolioStocksForPage"
+
+	slog.Debug("GetPortfolioStocksForPage start", slog.String("rqID", rqID), slog.String("op", op))
+	defer func() {
+		slog.Debug("GetPortfolioStocksForPage finished", slog.String("rqID", rqID), slog.String("op", op))
+	}()
+
+	key := r.createPortfolioStocksPage(portfolioID, page)
+
+	res, err := r.redis.Get(ctx, key).Result()
+	if err != nil {
+		slog.Error("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", key))
+		return nil, err
+	}
+
+	stocks := make([]model.Stock, 0)
+	err = json.Unmarshal([]byte(res), &stocks)
+	if err != nil {
+		slog.Error(
+			"can't unmarshall stocks",
+			slog.String("rqID", rqID),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+			slog.String("resultFromRedis", res),
+		)
+		return nil, errors.New("can't unmarshall stocks")
+	}
+
+	return stocks, nil
+}
+
+func (r *RedisCache) SetPortfolioStocksForPage(ctx context.Context, portfolioID int64, stocks []model.Stock, page int) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "RedisCache.SetPortfolioStocksForPage"
+
+	slog.Debug("SetPortfolioStocksForPage start", slog.String("rqID", rqID), slog.String("op", op))
+	defer func() {
+		slog.Debug("SetPortfolioStocksForPage finished", slog.String("rqID", rqID), slog.String("op", op))
+	}()
+
+	key := r.createPortfolioStocksPage(portfolioID, page)
+		
+	jsonData, err := json.Marshal(stocks)
+	if err != nil {
+		slog.Error(
+			"can't marshall stocks",
+			slog.String("rqID", rqID),
+			slog.String("op", op),
+			slog.String("err", err.Error()),
+			slog.Any("stocks", stocks),
+		)
+		return errors.New("can't marshall stocks")
+	}
+
+	_, err = r.redis.Set(ctx, key, jsonData, r.cfg.Cache.StocksExpiration).Result()
+	if err != nil {
+		slog.Error("failed on redis.Set", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return err
+	}
 
 	return nil
 }

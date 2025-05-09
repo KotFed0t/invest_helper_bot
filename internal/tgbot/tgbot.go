@@ -113,6 +113,10 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.SaveStockChanges(c)
 		case tgCallback.AddStockToPortfolio:
 			return b.ctrl.ProcessAddStockToPortfolio(c)
+		case tgCallback.DeleteStock:
+			return b.ctrl.ProcessDeleteStock(c)
+		case tgCallback.BackToPortolioFromAddStock:
+			return b.ctrl.ProcessBackToPortfolioFromStock(c)
 		default:
 			return c.Send("callback не опознан")
 			// тут уже можно проверять на hasPrefix

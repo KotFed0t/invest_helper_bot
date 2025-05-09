@@ -134,7 +134,7 @@ func (r *Postgres) GetUserID(ctx context.Context, chatID int64) (userID int64, e
 func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock dbModel.Stock, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `
-		SELECT portfolio_id, ticker, weight, user_id, quantity
+		SELECT portfolio_id, ticker, weight, quantity
 		FROM stocks_portfolio_details 
 		WHERE portfolio_id = $1
 		AND ticker = $2
@@ -160,7 +160,7 @@ func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, por
 func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []dbModel.Stock, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `
-		SELECT portfolio_id, ticker, weight, user_id, quantity
+		SELECT portfolio_id, ticker, weight, quantity
 		FROM stocks_portfolio_details 
 		WHERE portfolio_id = $1
 		`
@@ -193,9 +193,9 @@ func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64
 	return stocks, nil
 }
 
-func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64, ticker string, userID int64) (err error) {
+func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64, ticker string) (err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
-	query := `INSERT INTO stocks_portfolio_details(portfolio_id, ticker, user_id) VALUES($1, $2, $3)`
+	query := `INSERT INTO stocks_portfolio_details(portfolio_id, ticker) VALUES($1, $2)`
 
 	slog.Debug("InsertStockToPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
 	defer func() {
@@ -206,7 +206,7 @@ func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker, userID)
+	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -245,7 +245,7 @@ func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, 
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -272,7 +272,7 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 			slog.Debug("InsertStockOperationToHistory completed", slog.String("rqID", rqID), slog.String("op", op))
 		}
 	}()
-	
+
 	_, err = r.db.ExecContext(
 		ctx,
 		query,
@@ -284,9 +284,114 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 		stockOperation.TotalPrice,
 		stockOperation.Currency,
 	)
-	
+
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID int64, limit, offset int) (stocks []dbModel.Stock, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetPageStocksFromPortfolio"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+		"limit":       limit,
+		"offset":      offset,
+	}
+	query := `
+		SELECT portfolio_id, ticker, weight, quantity
+		FROM stocks_portfolio_details 
+		WHERE portfolio_id = $1
+		LIMIT $2
+		OFFSET $3
+		`
+
+	slog.Debug("GetPageStocksFromPortfolio start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetPageStocksFromPortfolio failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetPageStocksFromPortfolio completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	rows, err := r.db.QueryxContext(ctx, query, portfolioID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var stock dbModel.Stock
+		err = rows.StructScan(&stock)
+		if err != nil {
+			return nil, err
+		}
+		stocks = append(stocks, stock)
+	}
+
+	return stocks, nil
+}
+
+func (r *Postgres) DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.DeleteStockFromPortfolio"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+		"ticker":      ticker,
+	}
+
+	query := `
+		DELETE FROM stocks_portfolio_details 
+		WHERE 
+			portfolio_id = $1
+			AND ticker = $2
+		`
+
+	slog.Debug("DeleteStockFromPortfolio start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("DeleteStockFromPortfolio failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("DeleteStockFromPortfolio completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Postgres) GetPortfolioName(ctx context.Context, portfolioID int64) (name string, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetPortfolioName"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+	}
+
+	query := `
+		SELECT name FROM portfolios 
+		WHERE portfolio_id = $1
+		`
+
+	slog.Debug("GetPortfolioName start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetPortfolioName failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetPortfolioName completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	err = r.db.QueryRowxContext(ctx, query, portfolioID).Scan(&name)
+	if err != nil {
+		return "", err
+	}
+
+	return name, nil
 }

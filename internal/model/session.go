@@ -14,7 +14,6 @@ const (
 
 type Session struct {
 	Action       action
-	LastMsgId    int64
 	PortfolioID  int64
 	StockTicker  string
 	StockChanges *StockChanges

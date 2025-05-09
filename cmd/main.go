@@ -39,7 +39,7 @@ func main() {
 
 	go initialFillCache(ctx, moexApiClient, redisCache)
 
-	investHelperSrv := investHelperService.New(pgRepo, redisCache, moexApiClient)
+	investHelperSrv := investHelperService.New(cfg, pgRepo, redisCache, moexApiClient)
 
 	tgController := telegram.NewController(investHelperSrv, redisSession)
 

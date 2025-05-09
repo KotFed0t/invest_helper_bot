@@ -25,6 +25,8 @@ type InvestHelperService interface {
 	GetPortfolioStockInfo(ctx context.Context, ticker string, portfolioID int64) (model.Stock, error)
 	AddStockToPortfolio(ctx context.Context, ticker string, portfolioID, chatID int64) (model.Stock, error)
 	SaveStockChangesToPortfolio(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int, price *decimal.Decimal) (model.Stock, error)
+	DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) (model.PortfolioPage, error)
+	GetPortfolioPage(ctx context.Context, portfolioID int64, page int) (model.PortfolioPage, error)
 }
 
 type Session interface {
@@ -95,7 +97,11 @@ func (ctrl *Controller) ProcessStocksPortfolioCreation(c tele.Context) error {
 
 	chatSession.PortfolioID = portfolioID
 
-	portfolio := model.Portfolio{Name: c.Message().Text}
+	portfolio := model.PortfolioPage{
+		PortfolioSummary: model.PortfolioSummary{
+			PortfolioName: c.Message().Text,
+		},
+	}
 	return c.Send(telebotConverter.PortfolioDetailsResponse(portfolio))
 }
 
@@ -145,11 +151,11 @@ func (ctrl *Controller) ProcessAddStock(c tele.Context) error {
 		go ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	}()
 
-	// TODO ситуация что повторно добавляет акцию которая есть в портфеле (думаю просто обновлять уже при инсерте тогда)
 	ticker := strings.ToUpper(c.Message().Text)
 
 	stockInfo, err := ctrl.investHelperService.GetStockInfo(ctx, ticker)
 	if err != nil {
+		// TODO мб убрать кнопку ввести тикер повторно, когда ввел несуществующий?
 		if errors.Is(err, service.ErrNotFound) {
 			return c.Send("Не удалось найти указанный тикер", telebotConverter.StockNotFoundMarkup())
 		}
@@ -203,6 +209,11 @@ func (ctrl *Controller) ProcessChangeWeight(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
 		return c.Send(internalErrMsg)
 	}
 
@@ -261,6 +272,11 @@ func (ctrl *Controller) ProcessBuyStock(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
@@ -308,6 +324,11 @@ func (ctrl *Controller) ProcessSellStock(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
 		return c.Send(internalErrMsg)
 	}
 
@@ -371,6 +392,11 @@ func (ctrl *Controller) ProcessChangePrice(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
@@ -403,7 +429,11 @@ func (ctrl *Controller) ProcessAddStockToPortfolio(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
-	// TODO позволить указать свою цену покупки, либо использовать текущую
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
 	stock, err := ctrl.investHelperService.AddStockToPortfolio(ctx, chatSession.StockTicker, chatSession.PortfolioID, c.Chat().ID)
 	if err != nil {
 		slog.Error("failed on investHelperService.AddStockToPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
@@ -411,6 +441,62 @@ func (ctrl *Controller) ProcessAddStockToPortfolio(c tele.Context) error {
 	}
 
 	return c.Edit(telebotConverter.StockDetailResponse(stock, nil))
+}
+
+func (ctrl *Controller) ProcessDeleteStock(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.ProcessDeleteStock"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.StockTicker == "" {
+		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	portfolioPage, err := ctrl.investHelperService.DeleteStockFromPortfolio(ctx, chatSession.PortfolioID, chatSession.StockTicker)
+	if err != nil {
+		slog.Error("failed on investHelperService.DeleteStockFromPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
+}
+
+func (ctrl *Controller) ProcessBackToPortfolioFromStock(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.ProcessBackToPortfolioFromStock"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, 1)
+	if err != nil {
+		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	chatSession.Action = model.DefaultAction
+	chatSession.StockChanges = nil
+	chatSession.StockTicker = ""
+	go ctrl.session.SetSession(context.WithoutCancel(ctx), strconv.FormatInt(c.Chat().ID, 10), chatSession)
+
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
 }
 
 func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
@@ -434,6 +520,11 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
 		return c.Send(internalErrMsg)
 	}
 

@@ -12,12 +12,12 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-func PortfolioDetailsResponse(portfolio model.Portfolio) (text string, markup *tele.ReplyMarkup) {
+func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, markup *tele.ReplyMarkup) {
 	markup = &tele.ReplyMarkup{}
 	var sb strings.Builder
 
 	// Заголовок портфеля
-	sb.WriteString(fmt.Sprintf("📊 Портфель: %s\n", portfolio.Name))
+	sb.WriteString(fmt.Sprintf("📊 Портфель: %s\n", portfolio.PortfolioName))
 	sb.WriteString(fmt.Sprintf("💰 Баланс: %s ₽\n", portfolio.TotalBalance.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf(" - Текущий вес %s\n", portfolio.TotalWeight.StringFixed(2)))
 
@@ -41,12 +41,12 @@ func PortfolioDetailsResponse(portfolio model.Portfolio) (text string, markup *t
 	}
 
 	paginationBtns := make([]tele.Btn, 0, 2)
-	if portfolio.CurPage > 0 {
-		paginationBtns = append(paginationBtns, markup.Data("предыдущая", tgCallback.PrevPagePrefix+strconv.Itoa((portfolio.CurPage-1))))
+	if portfolio.CurPage > 1 {
+		paginationBtns = append(paginationBtns, markup.Data("назад", tgCallback.PrevPagePrefix+strconv.Itoa((portfolio.CurPage-1))))
 	}
 
-	if portfolio.HasNextPage {
-		paginationBtns = append(paginationBtns, markup.Data("следующая", tgCallback.NextPagePrefix+strconv.Itoa((portfolio.CurPage+1))))
+	if portfolio.TotalPages >= portfolio.CurPage {
+		paginationBtns = append(paginationBtns, markup.Data("вперед", tgCallback.NextPagePrefix+strconv.Itoa((portfolio.CurPage+1))))
 	}
 
 	addStockBtn := markup.Data("➕ Добавить акцию", tgCallback.AddStock)
@@ -91,7 +91,10 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 
 	changeWeightStockBtn := markup.Data("изменить вес", tgCallback.ChangeWeight)
 
-	deleteStockBtn := markup.Data("удалить из портфеля", "TODO")
+	var deleteStockBtn tele.Btn
+	if stock.Quantity == 0 {
+		deleteStockBtn = markup.Data("удалить из портфеля", tgCallback.DeleteStock)
+	}
 
 	var changePriceBtn tele.Btn
 	var saveBtn tele.Btn
@@ -145,7 +148,7 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 		saveBtn = markup.Data("сохранить изменения", tgCallback.SaveStockChanges)
 	}
 
-	backToPortfolioBtn := markup.Data("назад к портфелю", "TODO")
+	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolioFromAddStock)
 
 	markup.Inline(
 		row1,
