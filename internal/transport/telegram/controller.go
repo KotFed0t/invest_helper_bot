@@ -12,6 +12,7 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/internal/converter/telebotConverter"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
+	"github.com/KotFed0t/invest_helper_bot/internal/model/tg/tgCallback.go"
 	"github.com/KotFed0t/invest_helper_bot/internal/service"
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/shopspring/decimal"
@@ -545,4 +546,62 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 	go ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 
 	return c.Edit(telebotConverter.StockDetailResponse(stock, nil))
+}
+
+func (ctrl *Controller) GoToEditStock(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.GoToEditStock"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	ticker := strings.TrimPrefix(c.Callback().Data, fmt.Sprintf("\f%s", tgCallback.EditStockPrefix))
+
+	stockInfo, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, ticker, chatSession.PortfolioID)
+	if err != nil {
+		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	chatSession.StockTicker = ticker
+	go ctrl.session.SetSession(context.WithoutCancel(ctx), strconv.FormatInt(c.Chat().ID, 10), chatSession)
+
+	return c.Edit(telebotConverter.StockDetailResponse(stockInfo, nil))
+}
+
+func (ctrl *Controller) GoToPortfolioPage(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.NextPagePortfolio"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	pageStr := strings.TrimPrefix(c.Callback().Data, fmt.Sprintf("\f%s", tgCallback.ToPortfolioPage))
+	page, err := strconv.Atoi(pageStr)
+	if err != nil {
+		slog.Error("can't convert pageStr to int", slog.String("rqID", rqID), slog.String("op", op), slog.String("pageStr", pageStr))
+		return c.Send(internalErrMsg)
+	}
+
+	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
+	if err != nil {
+		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
 }

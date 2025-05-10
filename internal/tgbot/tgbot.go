@@ -98,28 +98,31 @@ func (b *TGBot) setupRoutes() {
 	b.bot.Handle(tele.OnCallback, func(c tele.Context) error {
 		callbackBtnText := strings.TrimPrefix(c.Callback().Data, "\f")
 
-		switch callbackBtnText {
-		case tgCallback.AddStock:
+		switch {
+		case callbackBtnText == tgCallback.AddStock:
 			return b.ctrl.InitAddStock(c)
-		case tgCallback.ChangeWeight:
+		case callbackBtnText == tgCallback.ChangeWeight:
 			return b.ctrl.InitChangeWeight(c)
-		case tgCallback.BuyStock:
+		case callbackBtnText == tgCallback.BuyStock:
 			return b.ctrl.InitBuyStock(c)
-		case tgCallback.SellStock:
+		case callbackBtnText == tgCallback.SellStock:
 			return b.ctrl.InitSellStock(c)
-		case tgCallback.ChangePrice:
+		case callbackBtnText == tgCallback.ChangePrice:
 			return b.ctrl.InitChangePrice(c)
-		case tgCallback.SaveStockChanges:
+		case callbackBtnText == tgCallback.SaveStockChanges:
 			return b.ctrl.SaveStockChanges(c)
-		case tgCallback.AddStockToPortfolio:
+		case callbackBtnText == tgCallback.AddStockToPortfolio:
 			return b.ctrl.ProcessAddStockToPortfolio(c)
-		case tgCallback.DeleteStock:
+		case callbackBtnText == tgCallback.DeleteStock:
 			return b.ctrl.ProcessDeleteStock(c)
-		case tgCallback.BackToPortolioFromAddStock:
+		case callbackBtnText == tgCallback.BackToPortolioFromAddStock:
 			return b.ctrl.ProcessBackToPortfolioFromStock(c)
+		case strings.HasPrefix(callbackBtnText, tgCallback.EditStockPrefix):
+			return b.ctrl.GoToEditStock(c)
+		case strings.HasPrefix(callbackBtnText, tgCallback.ToPortfolioPage):
+			return b.ctrl.GoToPortfolioPage(c)
 		default:
 			return c.Send("callback не опознан")
-			// тут уже можно проверять на hasPrefix
 		}
 	})
 

@@ -28,7 +28,7 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, marku
 		// Эмодзи с порядковым номером
 		emoji := fmt.Sprintf("%d️⃣", stock.Ordinal)
 
-		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.AddStock+stock.Ticker))
+		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.EditStockPrefix+stock.Ticker))
 
 		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", emoji, stock.Ticker, stock.Shortname))
 		sb.WriteString(fmt.Sprintf("▸ Вес: %s\n", stock.ActualWeight.StringFixed(2)))
@@ -40,13 +40,15 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, marku
 		sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
 	}
 
-	paginationBtns := make([]tele.Btn, 0, 2)
+	paginationBtns := make([]tele.Btn, 0, 3)
 	if portfolio.CurPage > 1 {
-		paginationBtns = append(paginationBtns, markup.Data("назад", tgCallback.PrevPagePrefix+strconv.Itoa((portfolio.CurPage-1))))
+		paginationBtns = append(paginationBtns, markup.Data("назад", tgCallback.ToPortfolioPage+strconv.Itoa((portfolio.CurPage-1))))
 	}
 
-	if portfolio.TotalPages >= portfolio.CurPage {
-		paginationBtns = append(paginationBtns, markup.Data("вперед", tgCallback.NextPagePrefix+strconv.Itoa((portfolio.CurPage+1))))
+	paginationBtns = append(paginationBtns, markup.Data(fmt.Sprintf("страница %d из %d", portfolio.CurPage, portfolio.TotalPages), tgCallback.PageNumber))
+
+	if portfolio.TotalPages > portfolio.CurPage {
+		paginationBtns = append(paginationBtns, markup.Data("вперед", tgCallback.ToPortfolioPage+strconv.Itoa((portfolio.CurPage+1))))
 	}
 
 	addStockBtn := markup.Data("➕ Добавить акцию", tgCallback.AddStock)
