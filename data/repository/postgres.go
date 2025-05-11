@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
+	"github.com/KotFed0t/invest_helper_bot/internal/converter/dbConverter"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/dbModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
@@ -131,7 +132,7 @@ func (r *Postgres) GetUserID(ctx context.Context, chatID int64) (userID int64, e
 	return userID, nil
 }
 
-func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock dbModel.Stock, err error) {
+func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock model.StockBase, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `
 		SELECT portfolio_id, ticker, weight, quantity
@@ -149,28 +150,23 @@ func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, por
 		}
 	}()
 
-	err = r.db.QueryRowxContext(ctx, query, portfolioID, ticker).StructScan(&stock)
+	dbStock := dbModel.Stock{}
+	err = r.db.QueryRowxContext(ctx, query, portfolioID, ticker).StructScan(&dbStock)
 	if err != nil {
-		return dbModel.Stock{}, err
+		return model.StockBase{}, err
 	}
 
-	return stock, nil
+	return dbConverter.ConvertStock(dbStock), nil
 }
 
-func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []dbModel.Stock, err error) {
+func (r *Postgres) getStocksFromPortfolio(ctx context.Context, portfolioID int64, query string) (stocks []model.StockBase, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
-	query := `
-		SELECT portfolio_id, ticker, weight, quantity
-		FROM stocks_portfolio_details 
-		WHERE portfolio_id = $1
-		`
-
-	slog.Debug("GetStocksFromPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
+	slog.Debug("getStocksFromPortfolio start", slog.String("rqID", rqID), slog.String("query", query))
 	defer func() {
 		if err != nil {
-			slog.Error("GetStocksFromPortfolio failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+			slog.Error("getStocksFromPortfolio failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
 		} else {
-			slog.Debug("GetStocksFromPortfolio completed", slog.String("rqID", rqID))
+			slog.Debug("getStocksFromPortfolio completed", slog.String("rqID", rqID))
 		}
 	}()
 
@@ -187,10 +183,31 @@ func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64
 		if err != nil {
 			return nil, err
 		}
-		stocks = append(stocks, stock)
+		stocks = append(stocks, dbConverter.ConvertStock(stock))
 	}
 
 	return stocks, nil
+}
+
+func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []model.StockBase, err error) {
+	query := `
+		SELECT portfolio_id, ticker, weight, quantity
+		FROM stocks_portfolio_details 
+		WHERE portfolio_id = $1
+		`
+		
+	return r.getStocksFromPortfolio(ctx, portfolioID, query)
+}
+
+func (r *Postgres) GetOnlyInIndexStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []model.StockBase, err error) {
+	query := `
+		SELECT portfolio_id, ticker, weight, quantity
+		FROM stocks_portfolio_details 
+		WHERE portfolio_id = $1
+		AND weight > 0
+		`
+
+	return r.getStocksFromPortfolio(ctx, portfolioID, query)
 }
 
 func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64, ticker string) (err error) {
@@ -291,7 +308,7 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 	return nil
 }
 
-func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID int64, limit, offset int) (stocks []dbModel.Stock, err error) {
+func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID int64, limit, offset int) (stocks []model.StockBase, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "Postgres.GetPageStocksFromPortfolio"
 	params := map[string]any{
@@ -329,7 +346,7 @@ func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID i
 		if err != nil {
 			return nil, err
 		}
-		stocks = append(stocks, stock)
+		stocks = append(stocks, dbConverter.ConvertStock(stock))
 	}
 
 	return stocks, nil

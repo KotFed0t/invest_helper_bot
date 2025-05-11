@@ -12,6 +12,7 @@ const (
 	SaveStockChanges           string = "save_stock_changes"
 	AddStockToPortfolio        string = "add_stock_to_portfolio" // добавить конкретный тикер в портфель
 	PageNumber                 string = "page_number"
+	CalculatePurchase          string = "calculate_purchase"
 
 	EditStockPrefix string = "edit_stock:"
 	ToPortfolioPage string = "to_portfolio_page:"

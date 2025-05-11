@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/data/session"
 	"github.com/KotFed0t/invest_helper_bot/internal/converter/telebotConverter"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
@@ -28,6 +29,7 @@ type InvestHelperService interface {
 	SaveStockChangesToPortfolio(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int, price *decimal.Decimal) (model.Stock, error)
 	DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) (model.PortfolioPage, error)
 	GetPortfolioPage(ctx context.Context, portfolioID int64, page int) (model.PortfolioPage, error)
+	CalculatePurchase(ctx context.Context, portfolioID int64, purchaseSum decimal.Decimal) ([]model.StockPurchase, error)
 }
 
 type Session interface {
@@ -36,12 +38,14 @@ type Session interface {
 }
 
 type Controller struct {
+	cfg                 *config.Config
 	investHelperService InvestHelperService
 	session             Session
 }
 
-func NewController(investHelperService InvestHelperService, session Session) *Controller {
+func NewController(cfg *config.Config, investHelperService InvestHelperService, session Session) *Controller {
 	return &Controller{
+		cfg:                 cfg,
 		investHelperService: investHelperService,
 		session:             session,
 	}
@@ -103,7 +107,7 @@ func (ctrl *Controller) ProcessStocksPortfolioCreation(c tele.Context) error {
 			PortfolioName: c.Message().Text,
 		},
 	}
-	return c.Send(telebotConverter.PortfolioDetailsResponse(portfolio))
+	return c.Send(telebotConverter.PortfolioDetailsResponse(portfolio, ctrl.cfg.StocksPerPage))
 }
 
 func (ctrl *Controller) getSessionFromTeleCtxOrStorage(ctx context.Context, c tele.Context) (model.Session, error) {
@@ -469,7 +473,7 @@ func (ctrl *Controller) ProcessDeleteStock(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
-	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
 }
 
 func (ctrl *Controller) ProcessBackToPortfolioFromStock(c tele.Context) error {
@@ -497,7 +501,7 @@ func (ctrl *Controller) ProcessBackToPortfolioFromStock(c tele.Context) error {
 	chatSession.StockTicker = ""
 	go ctrl.session.SetSession(context.WithoutCancel(ctx), strconv.FormatInt(c.Chat().ID, 10), chatSession)
 
-	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
 }
 
 func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
@@ -603,5 +607,70 @@ func (ctrl *Controller) GoToPortfolioPage(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
-	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage))
+	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
+}
+
+func (ctrl *Controller) InitCalculatePurchase(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	chatSession.Action = model.ExpectingPurchaseSum
+	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	return c.Edit("введите сумму закупки:")
+}
+
+func (ctrl *Controller) ProcessCalculatePurchase(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.ProcessCalculatePurchase"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	input := strings.Replace(c.Message().Text, ",", ".", 1)
+
+	purchaseSum, err := decimal.NewFromString(input)
+	if err != nil || purchaseSum.IsNegative() || purchaseSum.IsZero() {
+		return c.Send("Сумма должна быть положительным числом > 0, введите корректное значение:")
+	}
+
+	stocksToPurchase, err := ctrl.investHelperService.CalculatePurchase(ctx, chatSession.PortfolioID, purchaseSum)
+	if err != nil {
+		slog.Error("failed on investHelperService.CalculatePurchase", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	if len(stocksToPurchase) == 0 {
+		return c.Send("нельзя купить соответствуя индексу на указанную сумму, введите сумму больше:")
+	}
+
+	// portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, 1)
+	// if err != nil {
+	// 	slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+	// 	return c.Send(internalErrMsg)
+	// }
+
+	chatSession.Action = model.DefaultAction
+	go ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
+	
+	// TODO мб файликом отправлять если большой текст? или как в итоге лучше
+	texts, markup := telebotConverter.CalculatedStockPurchaseResponse(stocksToPurchase)
+	for _, text := range texts {
+		_ = c.Send(text)
+	}
+
+	return c.Edit("навигация:", markup)
 }

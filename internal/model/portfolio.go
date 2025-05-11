@@ -12,9 +12,10 @@ type PortfolioPage struct {
 }
 
 type PortfolioSummary struct {
-	PortfolioName       string
-	TotalBalance        decimal.Decimal
-	TotalWeight         decimal.Decimal
-	BalanceOutsideIndex decimal.Decimal
-	StocksCount         int
+	PortfolioName         string
+	TotalBalance          decimal.Decimal
+	TotalWeight           decimal.Decimal
+	BalanceOutsideIndex   decimal.Decimal
+	StocksCount           int
+	StocksOutsideIndexCnt int
 }

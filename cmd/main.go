@@ -41,7 +41,7 @@ func main() {
 
 	investHelperSrv := investHelperService.New(cfg, pgRepo, redisCache, moexApiClient)
 
-	tgController := telegram.NewController(investHelperSrv, redisSession)
+	tgController := telegram.NewController(cfg, investHelperSrv, redisSession)
 
 	tgBot := tgbot.New(cfg, tgController, redisSession)
 	tgBot.Start()

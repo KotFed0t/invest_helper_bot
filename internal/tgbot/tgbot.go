@@ -88,6 +88,8 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.ProcessSellStock(c)
 		case model.ExpectingChangePrice:
 			return b.ctrl.ProcessChangePrice(c)
+		case model.ExpectingPurchaseSum:
+			return b.ctrl.ProcessCalculatePurchase(c)
 		default:
 			slog.Error("unexpected chatSession action", slog.String("rqID", rqID), slog.Any("state", chatSession.Action))
 			return c.Send("сначала введите одну из команд")
@@ -117,6 +119,8 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.ProcessDeleteStock(c)
 		case callbackBtnText == tgCallback.BackToPortolioFromAddStock:
 			return b.ctrl.ProcessBackToPortfolioFromStock(c)
+		case callbackBtnText == tgCallback.CalculatePurchase:
+			return b.ctrl.InitCalculatePurchase(c)
 		case strings.HasPrefix(callbackBtnText, tgCallback.EditStockPrefix):
 			return b.ctrl.GoToEditStock(c)
 		case strings.HasPrefix(callbackBtnText, tgCallback.ToPortfolioPage):

@@ -3,15 +3,19 @@ package model
 import "github.com/shopspring/decimal"
 
 type Stock struct {
-	Ticker       string
+	StockBase
 	Shortname    string
-	Ordinal      int
 	Lotsize      int
-	TargetWeight decimal.Decimal
 	ActualWeight decimal.Decimal
-	Quantity     int
 	Price        decimal.Decimal
 	TotalPrice   decimal.Decimal
+}
+
+type StockBase struct {
+	PortfolioID  int64
+	Ticker       string
+	TargetWeight decimal.Decimal
+	Quantity     int
 }
 
 type StockChanges struct {
@@ -27,4 +31,12 @@ type StockOperation struct {
 	Price      decimal.Decimal
 	TotalPrice decimal.Decimal
 	Currency   string
+}
+
+type StockPurchase struct {
+	Ticker       string
+	Shortname    string
+	LotSize      int
+	LotsQuantity decimal.Decimal
+	StockPrice   decimal.Decimal
 }

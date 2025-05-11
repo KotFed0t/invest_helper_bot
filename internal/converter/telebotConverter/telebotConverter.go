@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
@@ -12,7 +13,7 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, markup *tele.ReplyMarkup) {
+func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) (text string, markup *tele.ReplyMarkup) {
 	markup = &tele.ReplyMarkup{}
 	var sb strings.Builder
 
@@ -24,9 +25,9 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, marku
 	// Состав портфеля
 	sb.WriteString("📋 Состав портфеля:\n\n")
 	stockBtns := make([]tele.Btn, 0, len(portfolio.Stocks))
-	for _, stock := range portfolio.Stocks {
+	for i, stock := range portfolio.Stocks {
 		// Эмодзи с порядковым номером
-		emoji := fmt.Sprintf("%d️⃣", stock.Ordinal)
+		emoji := fmt.Sprintf("%d️⃣", i+1+(stocksPerPage*(portfolio.CurPage-1)))
 
 		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.EditStockPrefix+stock.Ticker))
 
@@ -52,8 +53,14 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage) (text string, marku
 	}
 
 	addStockBtn := markup.Data("➕ Добавить акцию", tgCallback.AddStock)
+
+	var calculatePurchaseBtn tele.Btn
+	if portfolio.StocksCount > portfolio.StocksOutsideIndexCnt {
+		calculatePurchaseBtn = markup.Data("Рассчитать докупку акций", tgCallback.CalculatePurchase)
+	}
+
 	markup.Inline(
-		markup.Row(addStockBtn),
+		markup.Row(addStockBtn, calculatePurchaseBtn),
 		markup.Row(stockBtns...),
 		markup.Row(paginationBtns...),
 	)
@@ -124,7 +131,6 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 			if *stockChanges.Quantity < 0 {
 				sb.WriteString(fmt.Sprintf("▸ Акций к продаже: %d шт.\n", *stockChanges.Quantity*-1))
 			}
-			
 
 			var stockPrice, totalSum string
 
@@ -186,4 +192,39 @@ func StockAddResponse(stock moexModel.StockInfo) (text string, markup *tele.Repl
 	)
 
 	return sb.String(), markup
+}
+
+func CalculatedStockPurchaseResponse(stocks []model.StockPurchase) (texts []string, markup *tele.ReplyMarkup) {
+	markup = &tele.ReplyMarkup{}
+	sb := strings.Builder{}
+	// TODO переделать на другой колбэк
+	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolioFromAddStock)
+	markup.Inline(
+		markup.Row(backToPortfolioBtn),
+	)
+
+	for i, stock := range stocks {
+		ordinal := fmt.Sprintf("%d️⃣", i+1)
+		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", ordinal, stock.Ticker, stock.Shortname))
+		sb.WriteString(fmt.Sprintf("▸ лотов: %d шт\n", stock.LotsQuantity.IntPart()))
+		sb.WriteString(fmt.Sprintf("▸ на сумму: %s ₽\n\n", stock.StockPrice.Mul(decimal.NewFromInt(stock.LotsQuantity.IntPart()*int64(stock.LotSize))).StringFixed(2)))
+	}
+
+	text := sb.String()
+	lenRunes := utf8.RuneCountInString(text)
+	chunkSize := 4000
+	res := make([]string, 0, (len(text)/chunkSize)+1)
+	if lenRunes < chunkSize {
+		res = append(res, text)
+	} else {
+		for i := 0; i < len(text); i += chunkSize {
+			end := i + chunkSize
+			if end > len(text) {
+				end = len(text)
+			}
+			res = append(res, text[i:end])
+		}
+	}
+
+	return res, markup
 }

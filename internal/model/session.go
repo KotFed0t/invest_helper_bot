@@ -10,6 +10,7 @@ const (
 	ExpectingBuyStockQuantity
 	ExpectingSellStockQuantity
 	ExpectingChangePrice
+	ExpectingPurchaseSum
 )
 
 type Session struct {

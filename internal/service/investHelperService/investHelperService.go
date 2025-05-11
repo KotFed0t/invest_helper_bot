@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/data/repository"
 	"github.com/KotFed0t/invest_helper_bot/internal/externalApi"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
-	"github.com/KotFed0t/invest_helper_bot/internal/model/dbModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/internal/service"
 	"github.com/KotFed0t/invest_helper_bot/utils"
@@ -31,7 +31,7 @@ type Cache interface {
 	SetPortfolioSummary(ctx context.Context, portfolioID int64, summary model.PortfolioSummary) error
 	SetPortfolioStocksForPage(ctx context.Context, portfolioID int64, stocks []model.Stock, page int) error
 	FlushPortfolioCache(ctx context.Context, portfolioID int64) error
-	FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error 
+	FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error
 	FlushPortfolioStocksPagesCache(ctx context.Context, portfolioID int64) error
 }
 
@@ -39,9 +39,10 @@ type Repository interface {
 	RegUser(ctx context.Context, chatID int64) (userID int64, err error)
 	CreateStocksPortfolio(ctx context.Context, name string, userID int64) (portfolioID int64, err error)
 	GetUserID(ctx context.Context, chatID int64) (userID int64, err error)
-	GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock dbModel.Stock, err error)
-	GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []dbModel.Stock, err error)
-	GetPageStocksFromPortfolio(ctx context.Context, portfolioID int64, limit, offset int) (stocks []dbModel.Stock, err error)
+	GetStockFromPortfolio(ctx context.Context, ticker string, portfolioID int64) (stock model.StockBase, err error)
+	GetStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []model.StockBase, err error)
+	GetOnlyInIndexStocksFromPortfolio(ctx context.Context, portfolioID int64) (stocks []model.StockBase, err error)
+	GetPageStocksFromPortfolio(ctx context.Context, portfolioID int64, limit, offset int) (stocks []model.StockBase, err error)
 	InsertStockToPortfolio(ctx context.Context, portfolioID int64, ticker string) (err error)
 	DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) (err error)
 	UpdatePortfolioStock(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) (err error)
@@ -133,46 +134,9 @@ func (s *InvestHelperService) getPortfolioStocksForPage(ctx context.Context, por
 		return nil, err
 	}
 
-	if len(stocksDb) == 0 {
-		return []model.Stock{}, nil
-	}
-
-	// получаем актуальные цены для акций
-	tickers := make([]string, 0, len(stocksDb))
-	for _, stock := range stocksDb {
-		tickers = append(tickers, stock.Ticker)
-	}
-
-	stocksInfoMap, err := s.getStocksInfo(ctx, tickers)
+	stocks, err = s.enrichStocks(ctx, stocksDb, portfolioBalance)
 	if err != nil {
 		return nil, err
-	}
-
-	// обогащаем инфой акции из БД
-	stocks = make([]model.Stock, 0, len(stocksDb))
-	for i, stockDb := range stocksDb {
-		stockInfo, ok := stocksInfoMap[stockDb.Ticker]
-		if !ok {
-			slog.Error("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stockDb.Ticker))
-			return nil, errors.New("can't calculate stocks for page cause got partial info")
-		}
-
-		stock := model.Stock{
-			Ticker:       stockInfo.Ticker,
-			Shortname:    stockInfo.Shortname,
-			Ordinal:      i + 1 + (s.cfg.StocksPerPage * (page - 1)),
-			Lotsize:      stockInfo.Lotsize,
-			TargetWeight: stockDb.Weight,
-			Quantity:     stockDb.Quantity,
-			Price:        stockInfo.Price,
-			TotalPrice:   stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDb.Quantity))),
-		}
-
-		if !portfolioBalance.IsZero() {
-			stock.ActualWeight = stock.TotalPrice.Div(portfolioBalance).Mul(decimal.NewFromInt(100))
-		}
-
-		stocks = append(stocks, stock)
 	}
 
 	// сохраняем в кэш
@@ -354,7 +318,7 @@ func (s *InvestHelperService) GetPortfolioSummaryInfo(ctx context.Context, portf
 
 	// считаем totalBalance и totalWeight
 	for _, stock := range stocks {
-		summary.TotalWeight = summary.TotalWeight.Add(stock.Weight)
+		summary.TotalWeight = summary.TotalWeight.Add(stock.TargetWeight)
 
 		stockInfo, ok := stocksInfoMap[stock.Ticker]
 		if !ok {
@@ -362,10 +326,11 @@ func (s *InvestHelperService) GetPortfolioSummaryInfo(ctx context.Context, portf
 			return model.PortfolioSummary{}, errors.New("can't calculate summary cause got partial info")
 		}
 
-		if !stock.Weight.IsZero() {
+		if !stock.TargetWeight.IsZero() {
 			summary.TotalBalance = summary.TotalBalance.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
 		} else {
 			summary.BalanceOutsideIndex = summary.BalanceOutsideIndex.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
+			summary.StocksOutsideIndexCnt++
 		}
 	}
 	summary.StocksCount = len(stocks)
@@ -414,13 +379,11 @@ func (s *InvestHelperService) GetPortfolioStockInfo(ctx context.Context, ticker 
 	}
 
 	stock = model.Stock{
-		Ticker:       stockInfo.Ticker,
-		Shortname:    stockInfo.Shortname,
-		Lotsize:      stockInfo.Lotsize,
-		TargetWeight: stockDB.Weight,
-		Quantity:     stockDB.Quantity,
-		Price:        stockInfo.Price,
-		TotalPrice:   stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDB.Quantity))),
+		StockBase:  stockDB,
+		Shortname:  stockInfo.Shortname,
+		Lotsize:    stockInfo.Lotsize,
+		Price:      stockInfo.Price,
+		TotalPrice: stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDB.Quantity))),
 	}
 
 	if !portfolioSummary.TotalBalance.IsZero() {
@@ -558,4 +521,174 @@ func (s *InvestHelperService) DeleteStockFromPortfolio(ctx context.Context, port
 	}
 
 	return portfolioPage, nil
+}
+
+func (s *InvestHelperService) enrichStocks(ctx context.Context, stocksDb []model.StockBase, portfolioBalance decimal.Decimal) ([]model.Stock, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.enrichStocks"
+
+	if len(stocksDb) == 0 {
+		return []model.Stock{}, nil
+	}
+
+	tickers := make([]string, 0, len(stocksDb))
+	for _, stock := range stocksDb {
+		tickers = append(tickers, stock.Ticker)
+	}
+
+	stocksInfoMap, err := s.getStocksInfo(ctx, tickers)
+	if err != nil {
+		return nil, err
+	}
+
+	stocks := make([]model.Stock, 0, len(stocksDb))
+	for _, stockDb := range stocksDb {
+		stockInfo, ok := stocksInfoMap[stockDb.Ticker]
+		if !ok {
+			slog.Error("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stockDb.Ticker))
+			return nil, errors.New("can't calculate stocks for page cause got partial info")
+		}
+
+		stock := model.Stock{
+			StockBase:  stockDb,
+			Shortname:  stockInfo.Shortname,
+			Lotsize:    stockInfo.Lotsize,
+			Price:      stockInfo.Price,
+			TotalPrice: stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDb.Quantity))),
+		}
+
+		if !portfolioBalance.IsZero() {
+			stock.ActualWeight = stock.TotalPrice.Div(portfolioBalance).Mul(decimal.NewFromInt(100))
+		}
+
+		stocks = append(stocks, stock)
+	}
+
+	return stocks, nil
+}
+
+func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID int64, purchaseSum decimal.Decimal) ([]model.StockPurchase, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.CalculatePurchase"
+
+	slog.Debug("CalculatePurchase start", slog.String("rqID", rqID), slog.String("op", op), slog.String("purchaseSum", purchaseSum.StringFixed(2)), slog.Int64("portfolioID", portfolioID))
+	defer func() {
+		slog.Debug("CalculatePurchase finished", slog.String("rqID", rqID), slog.String("op", op), slog.String("purchaseSum", purchaseSum.StringFixed(2)), slog.Int64("portfolioID", portfolioID))
+	}()
+
+	// получить из БД акции где вес > 0
+	stocksDb, err := s.repo.GetOnlyInIndexStocksFromPortfolio(ctx, portfolioID)
+	if err != nil {
+		slog.Error("got error from repo.GetOnlyInIndexStocksFromPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return nil, err
+	}
+
+	if len(stocksDb) == 0 {
+		return []model.StockPurchase{}, nil
+	}
+
+	// TODO выпилить ordinal и totalPrice мб из stock? Плюс избавиться от stockDb в сервисном слое (надо разбить на stock из БД и stock уже обогащенная)
+
+	// получить баланс портфеля
+	portfolioSummary, err := s.GetPortfolioSummaryInfo(ctx, portfolioID)
+	if err != nil {
+		return nil, err
+	}
+
+	stocks, err := s.enrichStocks(ctx, stocksDb, portfolioSummary.TotalBalance)
+	if err != nil {
+		return nil, err
+	}
+
+	// сортируем список акций по убыванию цены лота
+	slices.SortFunc(stocks, func(a, b model.Stock) int {
+		aLotPrice := a.Price.Mul(decimal.NewFromInt(int64(a.Lotsize)))
+		bLotPrice := b.Price.Mul(decimal.NewFromInt(int64(b.Lotsize)))
+
+		switch {
+		case aLotPrice.LessThan(bLotPrice):
+			return 1
+		case aLotPrice.GreaterThan(bLotPrice):
+			return -1
+		default:
+			return 0
+		}
+	})
+
+	// либо сортируем список акций по убыванию недокупленности относительно портфеля
+	// slices.SortFunc(stocks, func(a, b model.Stock) int {
+	// 	aWeightDiffrence := a.TargetWeight.Sub(a.ActualWeight)
+	// 	bWeightDiffrence := b.TargetWeight.Sub(b.ActualWeight)
+
+	// 	switch {
+	// 	case aWeightDiffrence.LessThan(bWeightDiffrence):
+	// 		return 1
+	// 	case aWeightDiffrence.GreaterThan(bWeightDiffrence):
+	// 		return -1
+	// 	default:
+	// 		return 0
+	// 	}
+	// })
+
+	// итерируемся и заполняем stocksPurchase сначала целыми лотами и считаем общую сумму покупки целых лотов
+	stocksToPurchase := make([]model.StockPurchase, 0, len(stocks))
+	purchaseRemainder := purchaseSum
+	for _, stock := range stocks {
+		needToBuySum := portfolioSummary.TotalBalance.
+			Add(purchaseSum).
+			Mul(stock.TargetWeight).
+			Div(decimal.NewFromInt(100)).
+			Sub(stock.TotalPrice)
+
+		if needToBuySum.LessThanOrEqual(decimal.NewFromInt(0)) {
+			continue
+		}
+
+		lotPrice := stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize)))
+		if lotPrice.LessThanOrEqual(decimal.NewFromInt(0)) {
+			continue
+		}
+
+		if purchaseRemainder.LessThan(needToBuySum) {
+			needToBuySum = purchaseRemainder
+		}
+
+		lotsToBuy := needToBuySum.Div(lotPrice)
+		wholeLots := lotsToBuy.IntPart()
+		if wholeLots <= 0 {
+			continue
+		}
+
+		stockToPurchase := model.StockPurchase{
+			Ticker:       stock.Ticker,
+			Shortname:    stock.Shortname,
+			LotSize:      stock.Lotsize,
+			LotsQuantity: lotsToBuy,
+			StockPrice:   stock.Price,
+		}
+		stocksToPurchase = append(stocksToPurchase, stockToPurchase)
+		purchaseRemainder = purchaseRemainder.Sub(stock.Price.Mul(decimal.NewFromInt(wholeLots * int64(stock.Lotsize))))
+	}
+
+	// теперь зная остаток средств после покупки целых лотов, итерируемся еще раз и считаем докупку остаточной части лотов (округляя математически)
+	for i := range stocksToPurchase {
+		purchaseStock := &stocksToPurchase[i]
+		// округляем к целой части и проверяем в какую сторону округлилось
+		if purchaseStock.LotsQuantity.Round(0).LessThanOrEqual(purchaseStock.LotsQuantity) {
+			continue
+		}
+
+		// добавить еще +1 лот к покупке, если хватает остатка средств
+		lotPrice := purchaseStock.StockPrice.Mul(decimal.NewFromInt(int64(purchaseStock.LotSize)))
+		if purchaseRemainder.LessThan(lotPrice) {
+			continue
+		}
+
+		purchaseStock.LotsQuantity = purchaseStock.LotsQuantity.Round(0)
+		purchaseRemainder = purchaseRemainder.Sub(lotPrice)
+	}
+
+	slog.Info("result for purchase", slog.Any("purchaseStocks", stocksToPurchase))
+
+	return stocksToPurchase, nil
 }
