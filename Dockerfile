@@ -1,6 +1,10 @@
-FROM golang:1.22.0-alpine as builder
+FROM golang:1.24-alpine as builder
 
 WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
 
 ENV CGO_ENABLED=0
@@ -15,5 +19,6 @@ WORKDIR /app
 
 COPY --from=builder /build/invest_helper_bot /app/
 COPY --from=builder /build/.env /app/
+COPY --from=builder /build/migrations /app/migrations
 
 CMD ["./invest_helper_bot"]

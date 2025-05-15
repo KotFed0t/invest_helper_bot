@@ -13,3 +13,10 @@ func ConvertStock(dbStock dbModel.Stock) model.StockBase {
 		Quantity:     dbStock.Quantity,
 	}
 }
+
+func ConvertPortfolio(dbPortfolio dbModel.Portfolio) model.Portfolio {
+	return model.Portfolio{
+		ID:   dbPortfolio.PortfolioID,
+		Name: dbPortfolio.Name,
+	}
+}

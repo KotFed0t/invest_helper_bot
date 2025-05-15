@@ -61,6 +61,7 @@ func (b *TGBot) setupRoutes() {
 	// commands
 	b.bot.Handle("/start", b.ctrl.Start)
 	b.bot.Handle("/create_stocks_portfolio", b.ctrl.InitStocksPortfolioCreation)
+	b.bot.Handle("/my_portfolios", b.ctrl.GetPortfolios)
 
 	// text
 	b.bot.Handle(tele.OnText, func(c tele.Context) error {
@@ -117,14 +118,24 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.ProcessAddStockToPortfolio(c)
 		case callbackBtnText == tgCallback.DeleteStock:
 			return b.ctrl.ProcessDeleteStock(c)
-		case callbackBtnText == tgCallback.BackToPortolioFromAddStock:
-			return b.ctrl.ProcessBackToPortfolioFromStock(c)
+		case callbackBtnText == tgCallback.BackToPortolio:
+			return b.ctrl.ProcessBackToPortfolio(c)
 		case callbackBtnText == tgCallback.CalculatePurchase:
 			return b.ctrl.InitCalculatePurchase(c)
+		case callbackBtnText == tgCallback.BackToPortolioList:
+			return b.ctrl.ProcessBackToPortfolioList(c)
+		case callbackBtnText == tgCallback.RebalanceWeights:
+			return b.ctrl.RebalanceWeights(c)
+		case callbackBtnText == tgCallback.PageNumber:
+			return nil
 		case strings.HasPrefix(callbackBtnText, tgCallback.EditStockPrefix):
 			return b.ctrl.GoToEditStock(c)
 		case strings.HasPrefix(callbackBtnText, tgCallback.ToPortfolioPage):
 			return b.ctrl.GoToPortfolioPage(c)
+		case strings.HasPrefix(callbackBtnText, tgCallback.ToPortfolioListPage):
+			return b.ctrl.GetPortfolios(c)
+		case strings.HasPrefix(callbackBtnText, tgCallback.EditPortfolioPrefix):
+			return b.ctrl.GoToEditPortfolio(c)
 		default:
 			return c.Send("callback не опознан")
 		}

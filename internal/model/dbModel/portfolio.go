@@ -1,9 +1,6 @@
 package dbModel
 
-import (
-	"github.com/shopspring/decimal"
-)
-
 type Portfolio struct {
-	weight decimal.Decimal `db:"weight"`
+	PortfolioID int64  `db:"portfolio_id"`
+	Name        string `db:"name"`
 }

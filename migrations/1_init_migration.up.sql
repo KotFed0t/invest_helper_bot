@@ -27,3 +27,5 @@ CREATE TABLE IF NOT EXISTS stocks_operations_history(
     currency TEXT NOT NULL,
     dt_create TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS portfolios_user_id_idx ON portfolios(user_id);

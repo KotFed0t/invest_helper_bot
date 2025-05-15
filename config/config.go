@@ -16,8 +16,10 @@ type Config struct {
 	Redis             Redis
 	API               API
 	Cache             Cache
+	Jobs              Jobs
 	SessionExpiration time.Duration `env:"SESSION_EXPIRATION"`
 	StocksPerPage     int           `env:"STOCKS_PER_PAGE"`
+	PortfoliosPerPage int           `env:"PORTFOLIOS_PER_PAGE"`
 }
 
 type Postgres struct {
@@ -58,6 +60,10 @@ type MoexApi struct {
 
 type Cache struct {
 	StocksExpiration time.Duration `env:"CACHE_STOCKS_EXPIRATION"`
+}
+
+type Jobs struct {
+	FillMoexCacheInterval time.Duration `env:"FILL_MOEX_CACHE_JOB_INTERVAL"`
 }
 
 func MustLoad() *Config {

@@ -19,6 +19,7 @@ import (
 type MoexApi interface {
 	GetStocInfo(ctx context.Context, ticker string) (moexModel.StockInfo, error)
 	GetStocsInfo(ctx context.Context, tickers []string) (map[string]moexModel.StockInfo, error)
+	GetAllStocsInfo(ctx context.Context) ([]moexModel.StockInfo, error)
 }
 
 type Cache interface {
@@ -30,6 +31,7 @@ type Cache interface {
 	SetPortfolioStock(ctx context.Context, portfolioID int64, stock model.Stock) error
 	SetPortfolioSummary(ctx context.Context, portfolioID int64, summary model.PortfolioSummary) error
 	SetPortfolioStocksForPage(ctx context.Context, portfolioID int64, stocks []model.Stock, page int) error
+	SetStocks(ctx context.Context, stocks []moexModel.StockInfo) error
 	FlushPortfolioCache(ctx context.Context, portfolioID int64) error
 	FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error
 	FlushPortfolioStocksPagesCache(ctx context.Context, portfolioID int64) error
@@ -48,6 +50,8 @@ type Repository interface {
 	UpdatePortfolioStock(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) (err error)
 	InsertStockOperationToHistory(ctx context.Context, portfolioID int64, stockOperation model.StockOperation) (err error)
 	GetPortfolioName(ctx context.Context, portfolioID int64) (name string, err error)
+	GetPortfolios(ctx context.Context, chatID int64, limit, offset int) (portfolios []model.Portfolio, hasNextPage bool, err error)
+	RebalanceWeights(ctx context.Context, portfolioID int64) (err error)
 }
 
 type InvestHelperService struct {
@@ -196,22 +200,20 @@ func (s *InvestHelperService) GetStockInfo(ctx context.Context, ticker string) (
 	}()
 
 	stockInfo, err = s.cache.GetStockInfo(ctx, ticker)
-	if err != nil {
-		slog.Warn("can't get stock info from cache", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-
-		stockInfo, err = s.moexApi.GetStocInfo(ctx, ticker)
-		if err != nil {
-			if errors.Is(err, externalApi.ErrNotFound) {
-				slog.Warn("stock not found in moexApi", slog.String("rqID", rqID), slog.String("op", op))
-				return moexModel.StockInfo{}, service.ErrNotFound
-			}
-			slog.Error("can't get stock info from moexApi", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-			return moexModel.StockInfo{}, err
-		}
+	if err == nil {
+		return stockInfo, nil
 	}
 
-	if stockInfo.Status == false || stockInfo.Price.IsZero() {
-		return moexModel.StockInfo{}, service.ErrStockNotActive
+	slog.Warn("can't get stock info from cache", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+
+	stockInfo, err = s.moexApi.GetStocInfo(ctx, ticker)
+	if err != nil {
+		if errors.Is(err, externalApi.ErrNotFound) {
+			slog.Warn("stock not found in moexApi", slog.String("rqID", rqID), slog.String("op", op))
+			return moexModel.StockInfo{}, service.ErrNotFound
+		}
+		slog.Error("can't get stock info from moexApi", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return moexModel.StockInfo{}, err
 	}
 
 	return stockInfo, nil
@@ -373,8 +375,6 @@ func (s *InvestHelperService) GetPortfolioStockInfo(ctx context.Context, ticker 
 	// обогащаем инфой (кэш или запрос в moex)
 	stockInfo, err := s.GetStockInfo(ctx, ticker)
 	if err != nil {
-		// TODO может быть что акция перестала быть активной или цена пустая стала
-		// в таком случае не ошибку вернуть, а позволить клиенту удалить ее из портфеля
 		return model.Stock{}, err
 	}
 
@@ -501,7 +501,7 @@ func (s *InvestHelperService) deleteStockFromPortfolio(ctx context.Context, port
 	return nil
 }
 
-func (s *InvestHelperService) DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) (model.PortfolioPage, error) {
+func (s *InvestHelperService) DeleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) error {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "InvestHelperService.DeleteStockFromPortfolio"
 
@@ -512,15 +512,10 @@ func (s *InvestHelperService) DeleteStockFromPortfolio(ctx context.Context, port
 
 	err := s.deleteStockFromPortfolio(ctx, portfolioID, ticker)
 	if err != nil {
-		return model.PortfolioPage{}, err
+		return err
 	}
 
-	portfolioPage, err := s.GetPortfolioPage(ctx, portfolioID, 1)
-	if err != nil {
-		return model.PortfolioPage{}, err
-	}
-
-	return portfolioPage, nil
+	return nil
 }
 
 func (s *InvestHelperService) enrichStocks(ctx context.Context, stocksDb []model.StockBase, portfolioBalance decimal.Decimal) ([]model.Stock, error) {
@@ -586,8 +581,6 @@ func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID
 	if len(stocksDb) == 0 {
 		return []model.StockPurchase{}, nil
 	}
-
-	// TODO выпилить ordinal и totalPrice мб из stock? Плюс избавиться от stockDb в сервисном слое (надо разбить на stock из БД и stock уже обогащенная)
 
 	// получить баланс портфеля
 	portfolioSummary, err := s.GetPortfolioSummaryInfo(ctx, portfolioID)
@@ -691,4 +684,70 @@ func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID
 	slog.Info("result for purchase", slog.Any("purchaseStocks", stocksToPurchase))
 
 	return stocksToPurchase, nil
+}
+
+func (s *InvestHelperService) GetPortfolios(ctx context.Context, chatID int64, page int) (portfolios []model.Portfolio, hasNextPage bool, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.GetPortfolios"
+
+	slog.Debug("GetPortfolios start", slog.String("rqID", rqID), slog.String("op", op), slog.Int64("chatID", chatID))
+	defer func() {
+		slog.Debug("GetPortfolios finished", slog.String("rqID", rqID), slog.String("op", op), slog.Int64("chatID", chatID))
+	}()
+
+	portfolios, hasNextPage, err = s.repo.GetPortfolios(ctx, chatID, s.cfg.PortfoliosPerPage, (page-1)*s.cfg.PortfoliosPerPage)
+	if err != nil {
+		slog.Error("got error from repo.GetPortfolios", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return nil, false, err
+	}
+
+	slog.Debug("GetPortfolios result", slog.Any("portfolios", portfolios))
+
+	return portfolios, hasNextPage, nil
+}
+
+func (s *InvestHelperService) RebalanceWeights(ctx context.Context, portfolioID int64) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.RebalanceWeights"
+
+	slog.Debug("RebalanceWeights start", slog.String("rqID", rqID), slog.String("op", op), slog.Int64("chatID", portfolioID))
+	defer func() {
+		slog.Debug("RebalanceWeights finished", slog.String("rqID", rqID), slog.String("op", op), slog.Int64("chatID", portfolioID))
+	}()
+
+	err := s.repo.RebalanceWeights(ctx, portfolioID)
+	if err != nil {
+		slog.Error("got error from repo.RebalanceWeights", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return err
+	}
+
+	err = s.cache.FlushPortfolioCache(ctx, portfolioID)
+	if err != nil {
+		slog.Error("got error from cache.FlushPortfolioCache", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+	}
+
+	return nil
+}
+
+func (s *InvestHelperService) FillMoexCache(ctx context.Context) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.FillMoexCache"
+
+	slog.Debug("FillMoexCache start", slog.String("rqID", rqID), slog.String("op", op))
+
+	stocksInfo, err := s.moexApi.GetAllStocsInfo(ctx)
+	if err != nil {
+		slog.Error("initialFillCache failed on GetStocsInfo", slog.String("err", err.Error()))
+		return err
+	}
+
+	err = s.cache.SetStocks(ctx, stocksInfo)
+	if err != nil {
+		slog.Error("initialFillCache failed on SetStocks", slog.String("err", err.Error()))
+		return err
+	}
+
+	slog.Debug("FillMoexCache completed", slog.String("rqID", rqID), slog.String("op", op))
+
+	return nil
 }

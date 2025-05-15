@@ -194,8 +194,9 @@ func (r *Postgres) GetStocksFromPortfolio(ctx context.Context, portfolioID int64
 		SELECT portfolio_id, ticker, weight, quantity
 		FROM stocks_portfolio_details 
 		WHERE portfolio_id = $1
+		order by ticker 
 		`
-		
+
 	return r.getStocksFromPortfolio(ctx, portfolioID, query)
 }
 
@@ -320,6 +321,7 @@ func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID i
 		SELECT portfolio_id, ticker, weight, quantity
 		FROM stocks_portfolio_details 
 		WHERE portfolio_id = $1
+		ORDER BY ticker
 		LIMIT $2
 		OFFSET $3
 		`
@@ -340,6 +342,7 @@ func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID i
 
 	defer rows.Close()
 
+	stocks = make([]model.StockBase, 0, limit)
 	for rows.Next() {
 		var stock dbModel.Stock
 		err = rows.StructScan(&stock)
@@ -411,4 +414,94 @@ func (r *Postgres) GetPortfolioName(ctx context.Context, portfolioID int64) (nam
 	}
 
 	return name, nil
+}
+
+func (r *Postgres) GetPortfolios(ctx context.Context, chatID int64, limit, offset int) (portfolios []model.Portfolio, hasNextPage bool, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetPortfolios"
+	params := map[string]any{
+		"chatID": chatID,
+		"limit":  limit,
+		"offset": offset,
+	}
+	query := `
+		select p.portfolio_id, p."name" from portfolios p
+		join users u using(user_id)
+		where u.chat_id = $1
+		limit $2
+		offset $3
+		`
+
+	slog.Debug("GetPortfolios start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetPortfolios failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetPortfolios completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	// выбираем на 1 больше, чтобы знать есть ли next page
+	rows, err := r.db.QueryxContext(ctx, query, chatID, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+
+	defer rows.Close()
+
+	i := 0
+	portfolios = make([]model.Portfolio, 0, limit)
+	for rows.Next() {
+		i++
+		var portfolio dbModel.Portfolio
+		err = rows.StructScan(&portfolio)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if i > limit { // если на 1 больше лимита, значит есть next page
+			hasNextPage = true
+			break
+		}
+		portfolios = append(portfolios, dbConverter.ConvertPortfolio(portfolio))
+	}
+
+	return portfolios, hasNextPage, nil
+}
+
+func (r *Postgres) RebalanceWeights(ctx context.Context, portfolioID int64) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.RebalanceWeights"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+	}
+
+	query := `
+		WITH total AS (
+			SELECT SUM(weight) as total_weight
+			FROM stocks_portfolio_details
+			WHERE portfolio_id = $1 AND weight > 0
+		)
+
+		UPDATE stocks_portfolio_details s
+		SET weight = (s.weight / t.total_weight) * 100
+		FROM total t
+		WHERE s.portfolio_id = $1 AND s.weight > 0;
+		`
+
+	slog.Debug("RebalanceWeights start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("RebalanceWeights failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("RebalanceWeights completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, portfolioID)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

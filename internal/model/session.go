@@ -14,8 +14,10 @@ const (
 )
 
 type Session struct {
-	Action       action
-	PortfolioID  int64
-	StockTicker  string
-	StockChanges *StockChanges
+	Action                  action
+	PortfolioID             int64
+	StockTicker             string
+	StockChanges            *StockChanges
+	CurPortfolioListPage    int
+	CurPortfolioDetailsPage int
 }

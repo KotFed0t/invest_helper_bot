@@ -19,3 +19,8 @@ type PortfolioSummary struct {
 	StocksCount           int
 	StocksOutsideIndexCnt int
 }
+
+type Portfolio struct {
+	ID   int64
+	Name string
+}
