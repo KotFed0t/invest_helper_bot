@@ -9,7 +9,6 @@ import (
 )
 
 type Config struct {
-	Env               string `env:"ENV"`
 	LogLevel          string `env:"LOG_LEVEL"`
 	Postgres          Postgres
 	Telegram          Telegram

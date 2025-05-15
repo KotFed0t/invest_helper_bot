@@ -4,6 +4,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      - redis
+      - postgres
 
   postgres:
     image: postgres:17-alpine
