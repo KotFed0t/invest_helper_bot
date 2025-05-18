@@ -1,6 +1,10 @@
 package model
 
-import "github.com/shopspring/decimal"
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 type Stock struct {
 	StockBase
@@ -31,6 +35,7 @@ type StockOperation struct {
 	Price      decimal.Decimal
 	TotalPrice decimal.Decimal
 	Currency   string
+	DtCreate   time.Time
 }
 
 type StockPurchase struct {

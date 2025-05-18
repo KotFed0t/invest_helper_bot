@@ -69,7 +69,7 @@ func (p *Postgres) UpdateStocksTable(ctx context.Context, stocksInfo []moexModel
 	return err
 }
 
-func (r *Postgres) RegUser(ctx context.Context, chatID int64) (userID int64, err error) {
+func (r *Postgres) InsertUser(ctx context.Context, chatID int64) (userID int64, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `INSERT INTO users(chat_id) VALUES($1) RETURNING user_id`
 
@@ -84,6 +84,12 @@ func (r *Postgres) RegUser(ctx context.Context, chatID int64) (userID int64, err
 
 	err = r.db.QueryRowContext(ctx, query, chatID).Scan(&userID)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" { // unique_violation
+				return 0, ErrAlreadyExists
+			}
+		}
 		return 0, err
 	}
 
@@ -271,8 +277,8 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "Postgres.InsertStockOperationToHistory"
 	query := `
-		INSERT INTO stocks_operations_history(portfolio_id, ticker, shortname, quantity, price, total_price, currency)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO stocks_operations_history(portfolio_id, ticker, shortname, quantity, price, total_price, currency, dt_create)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 
 	slog.Debug(
@@ -301,6 +307,7 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 		stockOperation.Price,
 		stockOperation.TotalPrice,
 		stockOperation.Currency,
+		stockOperation.DtCreate,
 	)
 
 	if err != nil {
@@ -504,4 +511,160 @@ func (r *Postgres) RebalanceWeights(ctx context.Context, portfolioID int64) (err
 	}
 
 	return nil
+}
+
+func (r *Postgres) DeletePortfolio(ctx context.Context, portfolioID int64) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.DeletePortfolio"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+	}
+
+	// каскадное удаление
+	query := `
+		DELETE FROM portfolios 
+		WHERE portfolio_id = $1
+		`
+
+	slog.Debug("DeletePortfolio start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("DeletePortfolio failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("DeletePortfolio completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, portfolioID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Postgres) GetAllStocksByUserID(ctx context.Context, userID int64) (stocksByPortfolios map[int64][]model.StockBase, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetAllStocksByUserID"
+	params := map[string]any{
+		"userID": userID,
+	}
+	query := `
+		select portfolio_id, ticker, weight, quantity from portfolios
+		join stocks_portfolio_details using(portfolio_id)
+		where user_id = $1
+		`
+
+	slog.Debug("GetAllStocksByUserID start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetAllStocksByUserID failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetAllStocksByUserID completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	rows, err := r.db.QueryxContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	stocksByPortfolios = make(map[int64][]model.StockBase)
+	for rows.Next() {
+		var stock dbModel.Stock
+		err = rows.StructScan(&stock)
+		if err != nil {
+			return nil, err
+		}
+		stocsSlice := stocksByPortfolios[stock.PortfolioID]
+		stocsSlice = append(stocsSlice, dbConverter.ConvertStock(stock))
+		stocksByPortfolios[stock.PortfolioID] = stocsSlice
+	}
+
+	return stocksByPortfolios, nil
+}
+
+func (r *Postgres) GetAllStockOperationsByUserID(ctx context.Context, userID int64) (stockOperationsByPortfolios map[int64][]model.StockOperation, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetAllStockOperationsByUserID"
+	params := map[string]any{
+		"userID": userID,
+	}
+	query := `
+		select portfolio_id, ticker, shortname, quantity, price, total_price, currency, dt_create from portfolios
+		join stocks_operations_history using(portfolio_id)
+		where user_id = $1
+		`
+
+	slog.Debug("GetAllStockOperationsByUserID start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetAllStockOperationsByUserID failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetAllStockOperationsByUserID completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	rows, err := r.db.QueryxContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	stockOperationsByPortfolios = make(map[int64][]model.StockOperation)
+	for rows.Next() {
+		var stockOperation dbModel.StockOperation
+		err = rows.StructScan(&stockOperation)
+		if err != nil {
+			return nil, err
+		}
+		stockOperationsSlice := stockOperationsByPortfolios[stockOperation.PortfolioID]
+		stockOperationsSlice = append(stockOperationsSlice, dbConverter.ConvertStockOperation(stockOperation))
+		stockOperationsByPortfolios[stockOperation.PortfolioID] = stockOperationsSlice
+	}
+
+	return stockOperationsByPortfolios, nil
+}
+
+func (r *Postgres) GetAllPortfolioNamesByUserID(ctx context.Context, userID int64) (portfolioNames map[int64]string, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.GetAllPortfolioNamesByUserID"
+	params := map[string]any{
+		"userID": userID,
+	}
+	query := `
+		select portfolio_id, name from portfolios
+		where user_id = $1
+		`
+
+	slog.Debug("GetAllPortfolioNamesByUserID start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetAllPortfolioNamesByUserID failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetAllPortfolioNamesByUserID completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	rows, err := r.db.QueryxContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	portfolioNames = make(map[int64]string)
+	for rows.Next() {
+		var portfolio dbModel.Portfolio
+		err = rows.StructScan(&portfolio)
+		if err != nil {
+			return nil, err
+		}
+		portfolioNames[portfolio.PortfolioID] = portfolio.Name
+	}
+
+	return portfolioNames, nil
 }

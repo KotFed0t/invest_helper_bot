@@ -6,11 +6,11 @@ CREATE TABLE IF NOT EXISTS users(
 CREATE TABLE IF NOT EXISTS portfolios(
     portfolio_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name TEXT,
-    user_id BIGINT references users(user_id)
+    user_id BIGINT NOT NULL references users(user_id)
 );
 
 CREATE TABLE IF NOT EXISTS stocks_portfolio_details(
-    portfolio_id BIGINT references portfolios(portfolio_id),
+    portfolio_id BIGINT NOT NULL references portfolios(portfolio_id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
     weight DECIMAL(5, 2) NOT NULL DEFAULT 0,
     quantity INT NOT NULL DEFAULT 0,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS stocks_portfolio_details(
 );
 
 CREATE TABLE IF NOT EXISTS stocks_operations_history(
-    portfolio_id BIGINT references portfolios(portfolio_id),
+    portfolio_id BIGINT NOT NULL references portfolios(portfolio_id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
     shortname TEXT NOT NULL,
     quantity INT NOT NULL,

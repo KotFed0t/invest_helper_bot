@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,7 +12,9 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/data/cache"
 	"github.com/KotFed0t/invest_helper_bot/data/repository"
 	"github.com/KotFed0t/invest_helper_bot/data/session"
+	"github.com/KotFed0t/invest_helper_bot/internal/externalApi/cloudStorageApi/googleDriveApi"
 	"github.com/KotFed0t/invest_helper_bot/internal/externalApi/moexApi"
+	"github.com/KotFed0t/invest_helper_bot/internal/reportGenerator/xslsxGenerator"
 	"github.com/KotFed0t/invest_helper_bot/internal/scheduler"
 	"github.com/KotFed0t/invest_helper_bot/internal/service/investHelperService"
 	"github.com/KotFed0t/invest_helper_bot/internal/tgbot"
@@ -24,6 +27,9 @@ func main() {
 	setupLogger(cfg)
 
 	slog.Debug("config", slog.Any("cfg", cfg))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	pgClient := data.NewPostgresClient(cfg)
 	defer pgClient.Close()
@@ -38,7 +44,11 @@ func main() {
 
 	moexApiClient := moexApi.New(cfg)
 
-	investHelperSrv := investHelperService.New(cfg, pgRepo, redisCache, moexApiClient)
+	reportGenerator := xslsxGenerator.New()
+
+	googleCloudStorage := googleDriveApi.New(ctx, cfg)
+
+	investHelperSrv := investHelperService.New(cfg, pgRepo, redisCache, moexApiClient, reportGenerator, googleCloudStorage)
 
 	sched := scheduler.New()
 	sched.NewIntervalJob("fill moex cache", investHelperSrv.FillMoexCache, cfg.Jobs.FillMoexCacheInterval, true)

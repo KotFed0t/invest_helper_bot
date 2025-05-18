@@ -1,9 +1,11 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -33,6 +35,9 @@ type InvestHelperService interface {
 	CalculatePurchase(ctx context.Context, portfolioID int64, purchaseSum decimal.Decimal) ([]model.StockPurchase, error)
 	GetPortfolios(ctx context.Context, chatID int64, page int) (portfolios []model.Portfolio, hasNextPage bool, err error)
 	RebalanceWeights(ctx context.Context, portfolioID int64) error
+	DeletePortfolio(ctx context.Context, portfolioID int64) error
+	GeneratePortfoliosReport(ctx context.Context, chatID int64) (fileBytes []byte, filename string, err error)
+	UploadFileToCloud(ctx context.Context, reader io.Reader, filename string) (downloadLink string, err error)
 }
 
 type Session interface {
@@ -56,7 +61,10 @@ func NewController(cfg *config.Config, investHelperService InvestHelperService, 
 
 func (ctrl *Controller) Start(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
-	go ctrl.investHelperService.RegUser(context.WithoutCancel(ctx), c.Chat().ID)
+	err := ctrl.investHelperService.RegUser(context.WithoutCancel(ctx), c.Chat().ID)
+	if err != nil {
+		return c.Send("Регистрация завершилась с ошибкой. Вызовите команду /start еще раз.")
+	}
 	return c.Reply("Добро пожаловать! Можешь начать выбрав одну из команд в меню.")
 }
 
@@ -103,7 +111,9 @@ func (ctrl *Controller) ProcessStocksPortfolioCreation(c tele.Context) error {
 
 	portfolio := model.PortfolioPage{
 		PortfolioSummary: model.PortfolioSummary{
-			PortfolioName: c.Message().Text,
+			Portfolio: model.Portfolio{
+				PortfolioName: c.Message().Text,
+			},
 		},
 	}
 	return c.Send(telebotConverter.PortfolioDetailsResponse(portfolio, ctrl.cfg.StocksPerPage))
@@ -470,6 +480,8 @@ func (ctrl *Controller) ProcessDeleteStock(c tele.Context) error {
 		return c.Send(internalErrMsg)
 	}
 
+	_ = ctrl.sendAutoDeleteMsg(c, "акция успешно удалена")
+
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
@@ -802,10 +814,81 @@ func (ctrl *Controller) sendAutoDeleteMsg(c tele.Context, text string) error {
 		return err
 	}
 
-	time.AfterFunc(5 * time.Second, func() {
+	time.AfterFunc(5*time.Second, func() {
 		c.Bot().Delete(msg)
 	})
 	return nil
 }
+
+func (ctrl *Controller) InitDeletePortfolio(c tele.Context) error {
+	return c.Edit(
+		"Подтвердите удаление портфеля. Это действие необратимо, будут удалены все данные по портфелю и история операций!",
+		telebotConverter.DeletePortfolioConfirmation(),
+	)
+}
+
+func (ctrl *Controller) ProcessDeletePortfolio(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.ProcessDeletePortfolio"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	err = ctrl.investHelperService.DeletePortfolio(ctx, chatSession.PortfolioID)
+	if err != nil {
+		slog.Error("failed on investHelperService.DeletePortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	_ = ctrl.sendAutoDeleteMsg(c, "портфель успешно удален")
+
+	portfolios, hasNextPage, err := ctrl.investHelperService.GetPortfolios(ctx, c.Chat().ID, 1)
+	if err != nil {
+		slog.Error("failed on investHelperService.GetPortfolios", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	return c.Edit(telebotConverter.PortfolioListResponse(portfolios, ctrl.cfg.PortfoliosPerPage, 1, hasNextPage))
+}
+
+func (ctrl *Controller) GenerateReport(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.GenerateReport"
+
+	fileBytes, filename, err := ctrl.investHelperService.GeneratePortfoliosReport(ctx, c.Chat().ID)
+	if err != nil {
+		slog.Error("failed on investHelperService.GeneratePortfoliosReport", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	if len(fileBytes) < ctrl.cfg.Telegram.FileLimitInBytes {
+		doc := &tele.Document{
+			File:     tele.File{FileReader: bytes.NewReader(fileBytes)},
+			FileName: filename,
+		}
+		return c.Send(doc)
+	}
+
+	// иначе загружаем в облако и отправляем ссылку на скачивание
+	downloadLink, err := ctrl.investHelperService.UploadFileToCloud(ctx, bytes.NewReader(fileBytes), filename)
+	if err != nil {
+		slog.Error("failed on investHelperService.UploadFileToCloud", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	return c.Send(downloadLink)
+}
+
+// TODO вывод ошибок и других сообщений сделать временным, чтоыб не засорять
+
+// TODO при ошибке сесcии (устарела) - не выбрасывать ошибку, а возвращать к списку портфелей? и выводить сообщение временное "что-то пошло не так"
 
 // TODO сделать при calculation возможность добавить в портфель сразу

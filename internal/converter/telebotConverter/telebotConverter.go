@@ -19,7 +19,7 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 	// Заголовок портфеля
 	sb.WriteString(fmt.Sprintf("📊 Портфель: %s\n\n", portfolio.PortfolioName))
 	sb.WriteString("💰 Балансы: \n")
-	sb.WriteString(fmt.Sprintf("▸ в индексе: %s ₽\n", portfolio.TotalBalance.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ в индексе: %s ₽\n", portfolio.BalanceInsideIndex.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ вне индекса: %s ₽\n\n", portfolio.BalanceOutsideIndex.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("⚖️ Текущий вес %s %%\n\n", portfolio.TotalWeight.StringFixed(2)))
 
@@ -59,12 +59,17 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 
 	var calculatePurchaseBtn tele.Btn
 	if portfolio.StocksCount > portfolio.StocksOutsideIndexCnt {
-		calculatePurchaseBtn = markup.Data("Рассчитать докупку акций", tgCallback.CalculatePurchase)
+		calculatePurchaseBtn = markup.Data("Рассчитать закуп", tgCallback.CalculatePurchase)
 	}
 
 	var rebalanceWeights tele.Btn
 	if !portfolio.TotalWeight.IsZero() && (portfolio.TotalWeight.LessThan(decimal.NewFromInt(99)) || portfolio.TotalWeight.GreaterThan(decimal.NewFromInt(101))) {
 		rebalanceWeights = markup.Data("выровнять веса", tgCallback.RebalanceWeights)
+	}
+
+	var deletePortfolio tele.Btn
+	if portfolio.BalanceInsideIndex.IsZero() && portfolio.BalanceOutsideIndex.IsZero() {
+		deletePortfolio = markup.Data("⚠️ удалить портфель", tgCallback.InitDeletePortfolio)
 	}
 
 	backToPortfolioListBtn := markup.Data("К списку портфелей", tgCallback.BackToPortolioList)
@@ -74,6 +79,7 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 		markup.Row(rebalanceWeights),
 		markup.Row(stockBtns...),
 		markup.Row(paginationBtns...),
+		markup.Row(deletePortfolio),
 		markup.Row(backToPortfolioListBtn),
 	)
 
@@ -118,7 +124,7 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 
 	var deleteStockBtn tele.Btn
 	if stock.Quantity == 0 {
-		deleteStockBtn = markup.Data("удалить из портфеля", tgCallback.DeleteStock)
+		deleteStockBtn = markup.Data("⚠️ удалить из портфеля", tgCallback.DeleteStock)
 	}
 
 	var changePriceBtn tele.Btn
@@ -266,8 +272,8 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 			menuRows = append(menuRows, make(tele.Row, 0, 5))
 		}
 		ordinal := fmt.Sprintf("%d️)", i+1+(portfoliosPerPage*(curPage-1)))
-		sb.WriteString(fmt.Sprintf("%s %s\n\n", ordinal, portfolio.Name))
-		btn := markup.Data(portfolio.Name, tgCallback.EditPortfolioPrefix+strconv.FormatInt(portfolio.ID, 10))
+		sb.WriteString(fmt.Sprintf("%s %s\n\n", ordinal, portfolio.PortfolioName))
+		btn := markup.Data(portfolio.PortfolioName, tgCallback.EditPortfolioPrefix+strconv.FormatInt(portfolio.PortfolioID, 10))
 		menuRows[len(menuRows)-1] = append(menuRows[len(menuRows)-1], btn)
 	}
 
@@ -284,9 +290,22 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 		paginationBtns = append(paginationBtns, markup.Data("вперед", tgCallback.ToPortfolioListPage+strconv.Itoa((curPage+1))))
 	}
 
-	menuRows = append(menuRows, markup.Row(paginationBtns...))
+	generateReportBtn := markup.Data("сгенерировать отчет", tgCallback.GenerateReport)
+	
+	menuRows = append(menuRows, markup.Row(generateReportBtn), markup.Row(paginationBtns...))
 
 	markup.Inline(menuRows...)
 
 	return sb.String(), markup
+}
+
+func DeletePortfolioConfirmation() (markup *tele.ReplyMarkup) {
+	markup = &tele.ReplyMarkup{}
+	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolio)
+	deletePortfolioBtn := markup.Data("подтвердить удаление", tgCallback.ProcessDeletePortfolio)
+	markup.Inline(
+		markup.Row(backToPortfolioBtn),
+		markup.Row(deletePortfolioBtn),
+	)
+	return markup
 }

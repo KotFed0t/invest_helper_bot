@@ -126,6 +126,12 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.ProcessBackToPortfolioList(c)
 		case callbackBtnText == tgCallback.RebalanceWeights:
 			return b.ctrl.RebalanceWeights(c)
+		case callbackBtnText == tgCallback.InitDeletePortfolio:
+			return b.ctrl.InitDeletePortfolio(c)
+		case callbackBtnText == tgCallback.ProcessDeletePortfolio:
+			return b.ctrl.ProcessDeletePortfolio(c)
+		case callbackBtnText == tgCallback.GenerateReport:
+			return b.ctrl.GenerateReport(c)
 		case callbackBtnText == tgCallback.PageNumber:
 			return nil
 		case strings.HasPrefix(callbackBtnText, tgCallback.EditStockPrefix):

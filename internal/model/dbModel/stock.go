@@ -21,5 +21,5 @@ type StockOperation struct {
 	Price       decimal.Decimal `db:"price"`
 	TotalPrice  decimal.Decimal `db:"total_price"`
 	Currency    string          `db:"currency"`
-	CreatedAt   time.Time       `db:"dt_create"`
+	DtCreate    time.Time       `db:"dt_create"`
 }

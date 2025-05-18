@@ -14,9 +14,21 @@ func ConvertStock(dbStock dbModel.Stock) model.StockBase {
 	}
 }
 
+func ConvertStockOperation(dbStock dbModel.StockOperation) model.StockOperation {
+	return model.StockOperation{
+		Ticker:     dbStock.Ticker,
+		Shortname:  dbStock.Shortname,
+		Quantity:   dbStock.Quantity,
+		Price:      dbStock.Price,
+		TotalPrice: dbStock.TotalPrice,
+		Currency:   dbStock.Currency,
+		DtCreate:   dbStock.DtCreate,
+	}
+}
+
 func ConvertPortfolio(dbPortfolio dbModel.Portfolio) model.Portfolio {
 	return model.Portfolio{
-		ID:   dbPortfolio.PortfolioID,
-		Name: dbPortfolio.Name,
+		PortfolioID:   dbPortfolio.PortfolioID,
+		PortfolioName: dbPortfolio.Name,
 	}
 }

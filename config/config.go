@@ -16,6 +16,7 @@ type Config struct {
 	API               API
 	Cache             Cache
 	Jobs              Jobs
+	GoogleDrive       GoogleDrive
 	SessionExpiration time.Duration `env:"SESSION_EXPIRATION"`
 	StocksPerPage     int           `env:"STOCKS_PER_PAGE"`
 	PortfoliosPerPage int           `env:"PORTFOLIOS_PER_PAGE"`
@@ -36,8 +37,9 @@ type Postgres struct {
 }
 
 type Telegram struct {
-	Token      string        `env:"TELEGRAM_TOKEN"`
-	UpdTimeout time.Duration `env:"TELEGRAM_UPD_TIMEOUT"`
+	Token            string        `env:"TELEGRAM_TOKEN"`
+	UpdTimeout       time.Duration `env:"TELEGRAM_UPD_TIMEOUT"`
+	FileLimitInBytes int           `env:"TELEGRAM_FILE_LIMIT_IN_BYTES"`
 }
 
 type Redis struct {
@@ -63,6 +65,10 @@ type Cache struct {
 
 type Jobs struct {
 	FillMoexCacheInterval time.Duration `env:"FILL_MOEX_CACHE_JOB_INTERVAL"`
+}
+
+type GoogleDrive struct {
+	CredentialsFile  string `env:"GOOGLE_DRIVE_CREDENTIALS_FILE"`
 }
 
 func MustLoad() *Config {
