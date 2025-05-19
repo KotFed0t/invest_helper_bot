@@ -16,6 +16,7 @@ FROM alpine:latest
 
 WORKDIR /app
 
+# добавление базы mime типов
 RUN apk add --no-cache mailcap
 
 COPY --from=builder /build/invest_helper_bot /app/
