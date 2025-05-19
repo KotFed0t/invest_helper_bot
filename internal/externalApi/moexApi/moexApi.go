@@ -207,7 +207,7 @@ func (a *MoexApi) handleRawStocksInfo(rawStocksInfo moexModel.RawStocksInfo, han
 			switch rawStocksInfo.Marketdata.Columns[j] {
 			case "SECID":
 				stockInfo.Ticker, ok = rawStocksInfo.Marketdata.Data[i][j].(string)
-			case "MARKETPRICE":
+			case "LAST":
 				if rawStocksInfo.Marketdata.Data[i][j] != nil {
 					var price float64
 					price, ok = rawStocksInfo.Marketdata.Data[i][j].(float64)
