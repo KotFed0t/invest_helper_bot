@@ -34,7 +34,7 @@ func (a *MoexApi) getStocsInfo(ctx context.Context, tickers ...string) (moexMode
 	params := map[string]string{
 		"iss.meta":           "off",
 		"securities.columns": "SECID,SHORTNAME,LOTSIZE,CURRENCYID,STATUS",
-		"marketdata.columns": "SECID,MARKETPRICE",
+		"marketdata.columns": "SECID,LAST",
 	}
 
 	if len(tickers) > 0 {

@@ -205,7 +205,7 @@ func StockAddResponse(stock moexModel.StockInfo) (text string, markup *tele.Repl
 
 	addAnotherStockBtn := markup.Data("ввести другой тикер", tgCallback.AddStock)
 
-	backToPortfolioBtn := markup.Data("назад к портфелю", "TODO")
+	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolio)
 
 	markup.Inline(
 		markup.Row(addToPortfolioBtn),
