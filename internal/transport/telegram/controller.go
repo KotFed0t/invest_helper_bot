@@ -225,7 +225,7 @@ func (ctrl *Controller) ProcessChangeWeight(c tele.Context) error {
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -285,7 +285,7 @@ func (ctrl *Controller) ProcessBuyStock(c tele.Context) error {
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -340,7 +340,7 @@ func (ctrl *Controller) ProcessSellStock(c tele.Context) error {
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -405,7 +405,7 @@ func (ctrl *Controller) ProcessChangePrice(c tele.Context) error {
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -442,7 +442,7 @@ func (ctrl *Controller) ProcessAddStockToPortfolio(c tele.Context) error {
 	}
 
 	stock, err := ctrl.investHelperService.AddStockToPortfolio(ctx, chatSession.StockTicker, chatSession.PortfolioID, c.Chat().ID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.AddStockToPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -536,7 +536,7 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 
 	if chatSession.StockChanges == nil { // просто отрисуем текущий stock без изменений
 		stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
-		if err != nil {
+		if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 			slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 			return c.Send(internalErrMsg)
 		}
@@ -561,7 +561,7 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 		chatSession.StockChanges.Quantity,
 		chatSession.StockChanges.CustomPrice,
 	)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("got error from investHelperService.SaveStockChangesToPortfolio", slog.String("rqID", rqID), slog.String("op", op))
 		return c.Send(internalErrMsg)
 	}
@@ -589,7 +589,7 @@ func (ctrl *Controller) GoToEditStock(c tele.Context) error {
 	ticker := strings.TrimPrefix(c.Callback().Data, fmt.Sprintf("\f%s", tgCallback.EditStockPrefix))
 
 	stockInfo, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, ticker, chatSession.PortfolioID)
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return c.Send(internalErrMsg)
 	}
@@ -890,7 +890,10 @@ func (ctrl *Controller) GenerateReport(c tele.Context) error {
 // TODO вывод ошибок и других сообщений сделать временным, чтоыб не засорять
 
 // TODO при ошибке сесcии (устарела) - не выбрасывать ошибку, а возвращать к списку портфелей? и выводить сообщение временное "что-то пошло не так"
+// мб еще проверять сетевая ли ошибка или просто нет сессии
 
 // TODO сделать при calculation возможность добавить в портфель сразу
 
 // TODO сделать job для удаления старых файлов на google drive
+
+// TODO подумать насчет подсчета роста баланса и активов портфеля за все время хотябы

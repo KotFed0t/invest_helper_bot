@@ -360,21 +360,38 @@ func (s *InvestHelperService) calculatePortfolioSummary(
 	}
 
 	for _, stock := range stocks {
-		summary.TotalWeight = summary.TotalWeight.Add(stock.TargetWeight)
-
 		stockInfo, ok := stocksInfoMap[stock.Ticker]
 		if !ok {
-			slog.Error("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stock.Ticker))
-			return model.PortfolioSummary{}, errors.New("can't calculate summary cause got partial info")
+			slog.Warn("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stock.Ticker))
 		}
 
 		if !stock.TargetWeight.IsZero() {
 			summary.BalanceInsideIndex = summary.BalanceInsideIndex.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
+			summary.TotalWeight = summary.TotalWeight.Add(stock.TargetWeight)
 		} else {
 			summary.BalanceOutsideIndex = summary.BalanceOutsideIndex.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
 			summary.StocksOutsideIndexCnt++
 		}
 	}
+
+	if summary.BalanceInsideIndex.IsPositive() {
+		// расчет процента отклонения от индекса
+		for _, stock := range stocks {
+			if stock.TargetWeight.IsZero() {
+				continue
+			}
+
+			stockInfo, ok := stocksInfoMap[stock.Ticker]
+			if !ok {
+				slog.Warn("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stock.Ticker))
+			}
+
+			stockTotalPrice := stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity)))
+			actualWeight := stockTotalPrice.Div(summary.BalanceInsideIndex).Mul(decimal.NewFromInt(100))
+			summary.IndexOffset = summary.IndexOffset.Add(actualWeight.Sub(stock.TargetWeight).Abs())
+		}
+	}
+
 	summary.StocksCount = len(stocks)
 	summary.PortfolioID = PortfolioID
 
@@ -423,6 +440,9 @@ func (s *InvestHelperService) GetPortfolioStockInfo(ctx context.Context, ticker 
 	// обогащаем инфой (кэш или запрос в moex)
 	stockInfo, err := s.GetStockInfo(ctx, ticker)
 	if err != nil {
+		if errors.Is(err, service.ErrNotFound) { // если не нашли актуальную инфу - то возвращаем с ошибкой и инфой из БД (чтобы не крашить при смене тикера например)
+			return model.Stock{StockBase: stockDB}, service.ErrActualStockInfoUnavailable
+		}
 		return model.Stock{}, err
 	}
 
@@ -487,12 +507,7 @@ func (s *InvestHelperService) SaveStockChangesToPortfolio(
 		go s.saveStockOperationToHistory(context.WithoutCancel(ctx), portfolioID, ticker, *quantity, price)
 	}
 
-	stock, err := s.GetPortfolioStockInfo(ctx, ticker, portfolioID)
-	if err != nil {
-		return model.Stock{}, err
-	}
-
-	return stock, nil
+	return s.GetPortfolioStockInfo(ctx, ticker, portfolioID)
 }
 
 func (s *InvestHelperService) saveStockOperationToHistory(ctx context.Context, portfolioID int64, ticker string, quantity int, price *decimal.Decimal) error {
@@ -597,8 +612,7 @@ func (s *InvestHelperService) enrichStocks(
 	for _, stockDb := range stocksDb {
 		stockInfo, ok := stocksInfoMap[stockDb.Ticker]
 		if !ok {
-			slog.Error("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stockDb.Ticker))
-			return nil, errors.New("can't calculate stocks for page cause got partial info")
+			slog.Warn("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stockDb.Ticker))
 		}
 
 		stock := model.Stock{
@@ -900,9 +914,8 @@ func (s *InvestHelperService) GeneratePortfoliosReport(ctx context.Context, chat
 		}
 	}
 
-	stocksInfoMap, err := s.moexApi.GetStocsInfo(ctx, uniqueTickers)
+	stocksInfoMap, err := s.getStocksInfo(ctx, uniqueTickers)
 	if err != nil {
-		slog.Error("GeneratePortfolioReport failed on moexApi.GetStocsInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return nil, "", err
 	}
 

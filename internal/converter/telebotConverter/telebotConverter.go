@@ -21,14 +21,15 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 	sb.WriteString("💰 Балансы: \n")
 	sb.WriteString(fmt.Sprintf("▸ в индексе: %s ₽\n", portfolio.BalanceInsideIndex.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ вне индекса: %s ₽\n\n", portfolio.BalanceOutsideIndex.StringFixed(2)))
-	sb.WriteString(fmt.Sprintf("⚖️ Текущий вес %s %%\n\n", portfolio.TotalWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("⚖️ Текущий вес %s %%\n", portfolio.TotalWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("🔀 Отклонение от индекса %s %%\n\n", portfolio.IndexOffset.StringFixed(2)))
 
 	// Состав портфеля
 	sb.WriteString("📋 Состав портфеля:\n\n")
 	stockBtns := make([]tele.Btn, 0, len(portfolio.Stocks))
 	for i, stock := range portfolio.Stocks {
 		// Эмодзи с порядковым номером
-		ordinal := fmt.Sprintf("%d️)", i+1+(stocksPerPage*(portfolio.CurPage-1)))
+		ordinal := fmt.Sprintf("%d)", i+1+(stocksPerPage*(portfolio.CurPage-1)))
 
 		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.EditStockPrefix+stock.Ticker))
 
@@ -55,7 +56,7 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 		paginationBtns = append(paginationBtns, markup.Data("вперед", tgCallback.ToPortfolioPage+strconv.Itoa((portfolio.CurPage+1))))
 	}
 
-	addStockBtn := markup.Data("➕ Добавить акцию", tgCallback.AddStock)
+	addStockBtn := markup.Data("✚ Добавить акцию", tgCallback.AddStock)
 
 	var calculatePurchaseBtn tele.Btn
 	if portfolio.StocksCount > portfolio.StocksOutsideIndexCnt {
@@ -227,9 +228,10 @@ func CalculatedStockPurchaseResponse(stocks []model.StockPurchase, purchaseSum d
 	)
 
 	for i, stock := range stocks {
-		ordinal := fmt.Sprintf("%d️)", i+1)
+		ordinal := fmt.Sprintf("%d)", i+1)
 		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", ordinal, stock.Ticker, stock.Shortname))
 		sb.WriteString(fmt.Sprintf("▸ лотов: %d шт\n", stock.LotsQuantity.IntPart()))
+		sb.WriteString(fmt.Sprintf("▸ акций: %d шт\n", int64(stock.LotSize) * stock.LotsQuantity.IntPart()))
 
 		sum := stock.StockPrice.Mul(decimal.NewFromInt(stock.LotsQuantity.IntPart() * int64(stock.LotSize)))
 		actualPurchaseSum = actualPurchaseSum.Add(sum)
@@ -271,7 +273,7 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 		if i%5 == 0 {
 			menuRows = append(menuRows, make(tele.Row, 0, 5))
 		}
-		ordinal := fmt.Sprintf("%d️)", i+1+(portfoliosPerPage*(curPage-1)))
+		ordinal := fmt.Sprintf("%d)", i+1+(portfoliosPerPage*(curPage-1)))
 		sb.WriteString(fmt.Sprintf("%s %s\n\n", ordinal, portfolio.PortfolioName))
 		btn := markup.Data(portfolio.PortfolioName, tgCallback.EditPortfolioPrefix+strconv.FormatInt(portfolio.PortfolioID, 10))
 		menuRows[len(menuRows)-1] = append(menuRows[len(menuRows)-1], btn)

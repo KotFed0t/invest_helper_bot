@@ -18,6 +18,7 @@ type PortfolioSummary struct {
 	TotalWeight           decimal.Decimal
 	StocksCount           int
 	StocksOutsideIndexCnt int
+	IndexOffset           decimal.Decimal
 }
 
 type Portfolio struct {
