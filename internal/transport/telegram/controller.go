@@ -38,6 +38,7 @@ type InvestHelperService interface {
 	DeletePortfolio(ctx context.Context, portfolioID int64) error
 	GeneratePortfoliosReport(ctx context.Context, chatID int64) (fileBytes []byte, filename string, err error)
 	UploadFileToCloud(ctx context.Context, reader io.Reader, filename string) (downloadLink string, err error)
+	ApplyCalculatedPurchaseToPortfolio(ctx context.Context, portfolioID int64, stocksToPurchase []model.StockPurchase) error
 }
 
 type Session interface {
@@ -519,6 +520,7 @@ func (ctrl *Controller) ProcessBackToPortfolio(c tele.Context) error {
 	chatSession.Action = model.DefaultAction
 	chatSession.StockChanges = nil
 	chatSession.StockTicker = ""
+	chatSession.StocksToPurchase = nil
 	go ctrl.session.SetSession(context.WithoutCancel(ctx), strconv.FormatInt(c.Chat().ID, 10), chatSession)
 
 	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
@@ -681,6 +683,7 @@ func (ctrl *Controller) ProcessCalculatePurchase(c tele.Context) error {
 	}
 
 	chatSession.Action = model.DefaultAction
+	chatSession.StocksToPurchase = stocksToPurchase
 	go ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 
 	texts, markup := telebotConverter.CalculatedStockPurchaseResponse(stocksToPurchase, purchaseSum)
@@ -858,6 +861,38 @@ func (ctrl *Controller) ProcessDeletePortfolio(c tele.Context) error {
 	return c.Edit(telebotConverter.PortfolioListResponse(portfolios, ctrl.cfg.PortfoliosPerPage, 1, hasNextPage))
 }
 
+func (ctrl *Controller) ApplyCalculatedPurchaseToPortfolio(c tele.Context) error {
+	ctx := utils.CreateCtxWithRqID(c)
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Controller.ApplyCalculatedPurchaseToPortfolio"
+	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
+	if err != nil {
+		return c.Send(internalErrMsg)
+	}
+
+	if chatSession.PortfolioID == 0 {
+		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	if len(chatSession.StocksToPurchase) == 0 {
+		slog.Error("StocksToPurchase is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
+		return c.Send(internalErrMsg)
+	}
+
+	err = ctrl.investHelperService.ApplyCalculatedPurchaseToPortfolio(ctx, chatSession.PortfolioID, chatSession.StocksToPurchase)
+	if err != nil {
+		slog.Error("failed on investHelperService.ApplyCalculatedPurchaseToPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return c.Send(internalErrMsg)
+	}
+
+	_ = ctrl.sendAutoDeleteMsg(c, "операции успешно применены")
+
+	_, markup := telebotConverter.CalculatedStockPurchaseResponse(nil, decimal.NewFromInt(0))
+
+	return c.Edit("навигация:", markup)
+}
+
 func (ctrl *Controller) GenerateReport(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	rqID := utils.GetRequestIDFromCtx(ctx)
@@ -891,8 +926,6 @@ func (ctrl *Controller) GenerateReport(c tele.Context) error {
 
 // TODO при ошибке сесcии (устарела) - не выбрасывать ошибку, а возвращать к списку портфелей? и выводить сообщение временное "что-то пошло не так"
 // мб еще проверять сетевая ли ошибка или просто нет сессии
-
-// TODO сделать при calculation возможность добавить в портфель сразу
 
 // TODO сделать job для удаления старых файлов на google drive
 

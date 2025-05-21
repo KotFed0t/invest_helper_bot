@@ -20,4 +20,5 @@ type Session struct {
 	StockChanges            *StockChanges
 	CurPortfolioListPage    int
 	CurPortfolioDetailsPage int
+	StocksToPurchase        []StockPurchase
 }

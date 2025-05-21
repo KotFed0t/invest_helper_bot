@@ -223,7 +223,14 @@ func CalculatedStockPurchaseResponse(stocks []model.StockPurchase, purchaseSum d
 	actualPurchaseSum := decimal.NewFromInt(0)
 
 	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolio)
+	
+	var applyPurchaseToPortfolioBtn tele.Btn
+	if len(stocks) > 0 {
+		applyPurchaseToPortfolioBtn = markup.Data("применить докупку к портфелю", tgCallback.ApplyCalculatedPurchaseToPortfolio)
+	} 
+	
 	markup.Inline(
+		markup.Row(applyPurchaseToPortfolioBtn),
 		markup.Row(backToPortfolioBtn),
 	)
 
@@ -231,7 +238,7 @@ func CalculatedStockPurchaseResponse(stocks []model.StockPurchase, purchaseSum d
 		ordinal := fmt.Sprintf("%d)", i+1)
 		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", ordinal, stock.Ticker, stock.Shortname))
 		sb.WriteString(fmt.Sprintf("▸ лотов: %d шт\n", stock.LotsQuantity.IntPart()))
-		sb.WriteString(fmt.Sprintf("▸ акций: %d шт\n", int64(stock.LotSize) * stock.LotsQuantity.IntPart()))
+		sb.WriteString(fmt.Sprintf("▸ акций: %d шт\n", int64(stock.LotSize)*stock.LotsQuantity.IntPart()))
 
 		sum := stock.StockPrice.Mul(decimal.NewFromInt(stock.LotsQuantity.IntPart() * int64(stock.LotSize)))
 		actualPurchaseSum = actualPurchaseSum.Add(sum)
@@ -293,7 +300,7 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 	}
 
 	generateReportBtn := markup.Data("сгенерировать отчет", tgCallback.GenerateReport)
-	
+
 	menuRows = append(menuRows, markup.Row(generateReportBtn), markup.Row(paginationBtns...))
 
 	markup.Inline(menuRows...)

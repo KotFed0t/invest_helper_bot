@@ -60,6 +60,8 @@ type Repository interface {
 	GetAllStocksByUserID(ctx context.Context, userID int64) (stocksByPortfolios map[int64][]model.StockBase, err error)
 	GetAllStockOperationsByUserID(ctx context.Context, userID int64) (stockOperationsByPortfolios map[int64][]model.StockOperation, err error)
 	GetAllPortfolioNamesByUserID(ctx context.Context, userID int64) (portfolioNames map[int64]string, err error)
+	UpdateQuantityPortfolioStocks(ctx context.Context, portfolioID int64, stocks []model.StockOperation) (err error)
+	InsertStockOperationsToHistory(ctx context.Context, portfolioID int64, stockOperation []model.StockOperation) (err error)
 }
 
 type ReportGenerator interface {
@@ -971,4 +973,43 @@ func (s *InvestHelperService) UploadFileToCloud(ctx context.Context, reader io.R
 	slog.Debug("UploadFileToCloud completed", slog.String("rqID", rqID), slog.String("op", op))
 
 	return downloadLink, nil
+}
+
+func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Context, portfolioID int64, stocksToPurchase []model.StockPurchase) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "InvestHelperService.ApplyCalculatedPurchaseToPortfolio"
+
+	slog.Debug("ApplyCalculatedPurchaseToPortfolio start", slog.String("rqID", rqID), slog.String("op", op))
+
+	stockOperations := make([]model.StockOperation, 0, len(stocksToPurchase))
+	for _, stockPurchase := range stocksToPurchase {
+		stockOperation := model.StockOperation{
+			Ticker: stockPurchase.Ticker,
+			Shortname: stockPurchase.Shortname,
+			Quantity: int(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize)),
+			Price: stockPurchase.StockPrice,
+			TotalPrice: stockPurchase.StockPrice.Mul(decimal.NewFromInt(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize))),
+			Currency: "RUB",
+			DtCreate: time.Now(),
+		}
+		stockOperations = append(stockOperations, stockOperation)
+	}
+
+	err := s.repo.UpdateQuantityPortfolioStocks(ctx, portfolioID, stockOperations)
+	if err != nil {
+		slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.UpdateQuantityPortfolioStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return err
+	}
+
+	err = s.repo.InsertStockOperationsToHistory(ctx, portfolioID, stockOperations)
+	if err != nil {
+		slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.InsertStockOperationsToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return err
+	}
+
+	go s.cache.FlushPortfolioCache(context.WithoutCancel(ctx), portfolioID)
+
+	slog.Debug("ApplyCalculatedPurchaseToPortfolio completed", slog.String("rqID", rqID), slog.String("op", op))
+
+	return nil
 }

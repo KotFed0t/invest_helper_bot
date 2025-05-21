@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/internal/converter/dbConverter"
@@ -667,4 +668,123 @@ func (r *Postgres) GetAllPortfolioNamesByUserID(ctx context.Context, userID int6
 	}
 
 	return portfolioNames, nil
+}
+
+func (r *Postgres) UpdateQuantityPortfolioStocks(ctx context.Context, portfolioID int64, stocks []model.StockOperation) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.UpdateQuantityPortfolioStocks"
+	params := map[string]any{
+		"portfolioID": portfolioID,
+		"stocks":      stocks,
+	}
+
+	query := `
+		UPDATE stocks_portfolio_details AS s
+		SET quantity = s.quantity + u.quantity
+		FROM UNNEST($1::text[], $2::int[]) AS u(ticker, quantity)
+		WHERE s.ticker = u.ticker AND s.portfolio_id = $3
+		`
+
+	tickers := make([]string, 0, len(stocks))
+	quantities := make([]int, 0, len(stocks))
+	for _, stock := range stocks {
+		tickers = append(tickers, stock.Ticker)
+		quantities = append(quantities, stock.Quantity)
+	}
+
+	slog.Debug("UpdateQuantityPortfolioStocks start", slog.String("rqID", rqID), slog.String("op", op), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("UpdateQuantityPortfolioStocks failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("UpdateQuantityPortfolioStocks completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	_, err = r.db.ExecContext(ctx, query, tickers, quantities, portfolioID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Postgres) InsertStockOperationsToHistory(ctx context.Context, portfolioID int64, stockOperations []model.StockOperation) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "Postgres.InsertStockOperationsToHistory"
+	params := map[string]any{
+		"portfolioID":     portfolioID,
+		"stockOperations": stockOperations,
+	}
+	query := `
+        INSERT INTO stocks_operations_history(
+            portfolio_id, ticker, shortname, quantity,
+            price, total_price, currency, dt_create
+        )
+        SELECT 
+            $1, -- portfolio_id
+            u.ticker, 
+            u.shortname, 
+            u.quantity,
+            u.price, 
+            u.total_price, 
+            $2, -- currency
+            u.dt_create
+        FROM UNNEST(
+            $3::text[],
+            $4::text[],
+            $5::integer[],
+            $6::decimal[],
+            $7::decimal[],
+            $8::timestamptz[]
+        ) AS u(ticker, shortname, quantity, price, total_price, dt_create)`
+
+	tickers := make([]string, 0, len(stockOperations))
+	shortNames := make([]string, 0, len(stockOperations))
+	quantities := make([]int, 0, len(stockOperations))
+	prices := make([]decimal.Decimal, 0, len(stockOperations))
+	totalPrices := make([]decimal.Decimal, 0, len(stockOperations))
+	dtCreates := make([]time.Time, 0, len(stockOperations))
+
+	for _, op := range stockOperations {
+		tickers = append(tickers, op.Ticker)
+		shortNames = append(shortNames, op.Shortname)
+		quantities = append(quantities, op.Quantity)
+		prices = append(prices, op.Price)
+		totalPrices = append(totalPrices, op.TotalPrice)
+		dtCreates = append(dtCreates, op.DtCreate)
+	}
+
+	slog.Debug(
+		"InsertStockOperationsToHistory start",
+		slog.String("rqID", rqID),
+		slog.String("op", op),
+		slog.String("query", query),
+		slog.Any("params", params),
+	)
+	defer func() {
+		if err != nil {
+			slog.Error("InsertStockOperationsToHistory failed", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("InsertStockOperationsToHistory completed", slog.String("rqID", rqID), slog.String("op", op))
+		}
+	}()
+
+	_, err = r.db.ExecContext(
+		ctx,
+		query,
+		portfolioID,
+		"RUB",
+		tickers,
+		shortNames,
+		quantities,
+		prices,
+		totalPrices,
+		dtCreates,
+	)
+
+	if err != nil {
+		return err
+	}
+	return nil
 }
