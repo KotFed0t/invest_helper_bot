@@ -1,74 +1,20 @@
-package repository
+package postgres
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
-	"github.com/KotFed0t/invest_helper_bot/config"
+	"github.com/KotFed0t/invest_helper_bot/data/repository"
 	"github.com/KotFed0t/invest_helper_bot/internal/converter/dbConverter"
 	"github.com/KotFed0t/invest_helper_bot/internal/model"
 	"github.com/KotFed0t/invest_helper_bot/internal/model/dbModel"
-	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver
-	"github.com/jmoiron/sqlx"
 	"github.com/shopspring/decimal"
 )
-
-type Postgres struct {
-	db  *sqlx.DB
-	cfg *config.Config
-}
-
-func NewPostgres(cfg *config.Config, db *sqlx.DB) *Postgres {
-	return &Postgres{db: db, cfg: cfg}
-}
-
-func (p *Postgres) UpdateStocksTable(ctx context.Context, stocksInfo []moexModel.StockInfo) (err error) {
-	rqID := utils.GetRequestIDFromCtx(ctx)
-	slog.Debug("start UpdateStocksTable", slog.String("rqID", rqID))
-	sb := strings.Builder{}
-	args := make([]any, 0, len(stocksInfo)*5)
-
-	defer func() {
-		if err != nil {
-			slog.Error("failed update stocs table", slog.String("rqID", rqID), slog.String("err", err.Error()))
-		} else {
-			slog.Debug("Update Stocks Table completed", slog.String("rqID", rqID))
-		}
-	}()
-
-	sb.WriteString(`INSERT INTO stocks (ticker, shortname, lotsize, status, currency) VALUES `)
-
-	for i, stock := range stocksInfo {
-		args = append(args, stock.Ticker, stock.Shortname, stock.Lotsize, stock.Status, stock.CurrencyID)
-
-		start := i*5 + 1
-		sb.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)",
-			start, start+1, start+2, start+3, start+4,
-		))
-
-		if i < len(stocksInfo)-1 {
-			sb.WriteString(",")
-		}
-	}
-
-	sb.WriteString(`
-		ON CONFLICT (ticker) DO UPDATE SET
-			shortname = EXCLUDED.shortname,
-			lotsize = EXCLUDED.lotsize,
-			status = EXCLUDED.status,
-			currency = EXCLUDED.currency;
-	`)
-
-	_, err = p.db.ExecContext(ctx, sb.String(), args...)
-	return err
-}
 
 func (r *Postgres) InsertUser(ctx context.Context, chatID int64) (userID int64, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
@@ -83,12 +29,12 @@ func (r *Postgres) InsertUser(ctx context.Context, chatID int64) (userID int64, 
 		}
 	}()
 
-	err = r.db.QueryRowContext(ctx, query, chatID).Scan(&userID)
+	err = r.txOrDb(ctx).QueryRowContext(ctx, query, chatID).Scan(&userID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			if pgErr.Code == "23505" { // unique_violation
-				return 0, ErrAlreadyExists
+				return 0, repository.ErrAlreadyExists
 			}
 		}
 		return 0, err
@@ -110,7 +56,7 @@ func (r *Postgres) CreateStocksPortfolio(ctx context.Context, portfolioName stri
 		}
 	}()
 
-	err = r.db.QueryRowContext(ctx, query, portfolioName, userID).Scan(&portfolioID)
+	err = r.txOrDb(ctx).QueryRowContext(ctx, query, portfolioName, userID).Scan(&portfolioID)
 	if err != nil {
 		return 0, err
 	}
@@ -131,7 +77,7 @@ func (r *Postgres) GetUserID(ctx context.Context, chatID int64) (userID int64, e
 		}
 	}()
 
-	err = r.db.QueryRowContext(ctx, query, chatID).Scan(&userID)
+	err = r.txOrDb(ctx).QueryRowContext(ctx, query, chatID).Scan(&userID)
 	if err != nil {
 		return 0, err
 	}
@@ -158,7 +104,7 @@ func (r *Postgres) GetStockFromPortfolio(ctx context.Context, ticker string, por
 	}()
 
 	dbStock := dbModel.Stock{}
-	err = r.db.QueryRowxContext(ctx, query, portfolioID, ticker).StructScan(&dbStock)
+	err = r.txOrDb(ctx).QueryRowxContext(ctx, query, portfolioID, ticker).StructScan(&dbStock)
 	if err != nil {
 		return model.StockBase{}, err
 	}
@@ -177,7 +123,7 @@ func (r *Postgres) getStocksFromPortfolio(ctx context.Context, portfolioID int64
 		}
 	}()
 
-	rows, err := r.db.QueryxContext(ctx, query, portfolioID)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID)
 	if err != nil {
 		return nil, err
 	}
@@ -231,12 +177,12 @@ func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, portfolioID, ticker)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			if pgErr.Code == "23505" { // unique_violation
-				return ErrAlreadyExists
+				return repository.ErrAlreadyExists
 			}
 		}
 		return err
@@ -266,7 +212,7 @@ func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, 
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, quantity, weight, portfolioID, ticker)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, quantity, weight, portfolioID, ticker)
 	if err != nil {
 		return err
 	}
@@ -298,7 +244,7 @@ func (r *Postgres) InsertStockOperationToHistory(ctx context.Context, portfolioI
 		}
 	}()
 
-	_, err = r.db.ExecContext(
+	_, err = r.txOrDb(ctx).ExecContext(
 		ctx,
 		query,
 		portfolioID,
@@ -343,7 +289,7 @@ func (r *Postgres) GetPageStocksFromPortfolio(ctx context.Context, portfolioID i
 		}
 	}()
 
-	rows, err := r.db.QueryxContext(ctx, query, portfolioID, limit, offset)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +333,7 @@ func (r *Postgres) DeleteStockFromPortfolio(ctx context.Context, portfolioID int
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, portfolioID, ticker)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, portfolioID, ticker)
 	if err != nil {
 		return err
 	}
@@ -416,7 +362,7 @@ func (r *Postgres) GetPortfolioName(ctx context.Context, portfolioID int64) (nam
 		}
 	}()
 
-	err = r.db.QueryRowxContext(ctx, query, portfolioID).Scan(&name)
+	err = r.txOrDb(ctx).QueryRowxContext(ctx, query, portfolioID).Scan(&name)
 	if err != nil {
 		return "", err
 	}
@@ -450,7 +396,7 @@ func (r *Postgres) GetPortfolios(ctx context.Context, chatID int64, limit, offse
 	}()
 
 	// выбираем на 1 больше, чтобы знать есть ли next page
-	rows, err := r.db.QueryxContext(ctx, query, chatID, limit+1, offset)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, chatID, limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
@@ -506,7 +452,7 @@ func (r *Postgres) RebalanceWeights(ctx context.Context, portfolioID int64) (err
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, portfolioID)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, portfolioID)
 	if err != nil {
 		return err
 	}
@@ -536,7 +482,7 @@ func (r *Postgres) DeletePortfolio(ctx context.Context, portfolioID int64) (err 
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, portfolioID)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, portfolioID)
 	if err != nil {
 		return err
 	}
@@ -565,7 +511,7 @@ func (r *Postgres) GetAllStocksByUserID(ctx context.Context, userID int64) (stoc
 		}
 	}()
 
-	rows, err := r.db.QueryxContext(ctx, query, userID)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,7 +554,7 @@ func (r *Postgres) GetAllStockOperationsByUserID(ctx context.Context, userID int
 		}
 	}()
 
-	rows, err := r.db.QueryxContext(ctx, query, userID)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +596,7 @@ func (r *Postgres) GetAllPortfolioNamesByUserID(ctx context.Context, userID int6
 		}
 	}()
 
-	rows, err := r.db.QueryxContext(ctx, query, userID)
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -701,7 +647,7 @@ func (r *Postgres) UpdateQuantityPortfolioStocks(ctx context.Context, portfolioI
 		}
 	}()
 
-	_, err = r.db.ExecContext(ctx, query, tickers, quantities, portfolioID)
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, tickers, quantities, portfolioID)
 	if err != nil {
 		return err
 	}
@@ -770,7 +716,7 @@ func (r *Postgres) InsertStockOperationsToHistory(ctx context.Context, portfolio
 		}
 	}()
 
-	_, err = r.db.ExecContext(
+	_, err = r.txOrDb(ctx).ExecContext(
 		ctx,
 		query,
 		portfolioID,

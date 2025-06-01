@@ -10,7 +10,7 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/data"
 	"github.com/KotFed0t/invest_helper_bot/data/cache"
-	"github.com/KotFed0t/invest_helper_bot/data/repository"
+	"github.com/KotFed0t/invest_helper_bot/data/repository/postgres"
 	"github.com/KotFed0t/invest_helper_bot/data/session"
 	"github.com/KotFed0t/invest_helper_bot/internal/externalApi/cloudStorageApi/googleDriveApi"
 	"github.com/KotFed0t/invest_helper_bot/internal/externalApi/moexApi"
@@ -34,7 +34,7 @@ func main() {
 	pgClient := data.NewPostgresClient(cfg)
 	defer pgClient.Close()
 
-	pgRepo := repository.NewPostgres(cfg, pgClient)
+	pgRepo := postgres.NewPostgres(cfg, pgClient)
 
 	redisClient := data.NewRedisClient(cfg)
 	defer redisClient.Close()
@@ -48,7 +48,15 @@ func main() {
 
 	googleCloudStorage := googleDriveApi.New(ctx, cfg)
 
-	investHelperSrv := investHelperService.New(cfg, pgRepo, redisCache, moexApiClient, reportGenerator, googleCloudStorage)
+	investHelperSrv := investHelperService.New(
+		cfg,
+		pgRepo, // в роли stocsRepo
+		redisCache,
+		moexApiClient,
+		reportGenerator,
+		googleCloudStorage,
+		pgRepo, // в роли transactor
+	)
 
 	sched := scheduler.New()
 	sched.NewIntervalJob("fill moex cache", investHelperSrv.FillMoexCache, cfg.Jobs.FillMoexCacheInterval, true)

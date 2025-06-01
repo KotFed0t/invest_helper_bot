@@ -41,6 +41,12 @@ type Cache interface {
 	FlushPortfolioStocksPagesCache(ctx context.Context, portfolioID int64) error
 }
 
+type Transactor interface {
+	WithinTransaction(ctx context.Context, tFunc func(ctx context.Context) error) error
+}
+
+// TODO позже разбить интерфейс на stocksRepo и на CryptoRepo. (но саму репу можно просто по файлам разбить, а структуру оставить одну для удобства
+// и сюда просто ее дважды передать как под два разных интерфейса)
 type Repository interface {
 	InsertUser(ctx context.Context, chatID int64) (userID int64, err error)
 	CreateStocksPortfolio(ctx context.Context, name string, userID int64) (portfolioID int64, err error)
@@ -79,9 +85,10 @@ type InvestHelperService struct {
 	moexApi         MoexApi
 	reportGenerator ReportGenerator
 	cloudStorageApi CloudStorageApi
+	transactor      Transactor
 }
 
-func New(cfg *config.Config, repo Repository, cache Cache, moexApi MoexApi, reportGenerator ReportGenerator, cloudStorageApi CloudStorageApi) *InvestHelperService {
+func New(cfg *config.Config, repo Repository, cache Cache, moexApi MoexApi, reportGenerator ReportGenerator, cloudStorageApi CloudStorageApi, transactor Transactor) *InvestHelperService {
 	return &InvestHelperService{
 		cfg:             cfg,
 		repo:            repo,
@@ -89,6 +96,7 @@ func New(cfg *config.Config, repo Repository, cache Cache, moexApi MoexApi, repo
 		moexApi:         moexApi,
 		reportGenerator: reportGenerator,
 		cloudStorageApi: cloudStorageApi,
+		transactor:      transactor,
 	}
 }
 
@@ -851,28 +859,6 @@ func (s *InvestHelperService) DeletePortfolio(ctx context.Context, portfolioID i
 	return nil
 }
 
-// селектим все акции по всем портфелям
-// селектим все операции по всем портфелям
-// имена портфелей либо сразу селектить в виде map
-
-// чтобы сократить кол-во вызовов api, берем уникальные тикеры и получаем по ним infoMap
-// через Map придется чекать уникальность. Ну и пока итерируемся нарезаем в отдельный слайс наши портфели
-
-// считаем portfolioSummary вырезав кусок акций по портфелю (stocksDb, infoMap) - поменять метод под такое
-// (просто новый создадим под такое и в summary его тоже встави в основной) только с name что-то придумать надо
-// склоняюсь сделать этот метод с параметром name *string - и если он nil то запрашивать имя, иначе подставить переданное и вернуть уже полноценную структуру portfolio.
-
-// думаю кэшировать такое summary не стоит, так как передать можно любые акции. И если вдруг в одном месте косяк будет и запишем в кэш - то потянем все остальные расчеты
-// за собой
-
-// вот когда есть infoMap и sum инфа по портфелям, вырезаем слайс по portfolioID и можем заюзать enrichStocks (нужно добавить прием *map и если он передан - то не запрашивать в moex инфу)
-
-// в конце нарезаем history, ну тут ничего дополнительно не надо
-
-// итерируемся по нарезанным портфелям и обогащаем нужной инфой
-// получить кусок истории
-// создаем модель PortfolioFullInfo и туда постепенно складываем получаемую инфу. А сами модели апендим в слайс.
-
 func (s *InvestHelperService) GeneratePortfoliosReport(ctx context.Context, chatID int64) (fileBytes []byte, filename string, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "InvestHelperService.GeneratePortfolioReport"
@@ -984,26 +970,33 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 	stockOperations := make([]model.StockOperation, 0, len(stocksToPurchase))
 	for _, stockPurchase := range stocksToPurchase {
 		stockOperation := model.StockOperation{
-			Ticker: stockPurchase.Ticker,
-			Shortname: stockPurchase.Shortname,
-			Quantity: int(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize)),
-			Price: stockPurchase.StockPrice,
+			Ticker:     stockPurchase.Ticker,
+			Shortname:  stockPurchase.Shortname,
+			Quantity:   int(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize)),
+			Price:      stockPurchase.StockPrice,
 			TotalPrice: stockPurchase.StockPrice.Mul(decimal.NewFromInt(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize))),
-			Currency: "RUB",
-			DtCreate: time.Now(),
+			Currency:   "RUB",
+			DtCreate:   time.Now(),
 		}
 		stockOperations = append(stockOperations, stockOperation)
 	}
 
-	err := s.repo.UpdateQuantityPortfolioStocks(ctx, portfolioID, stockOperations)
-	if err != nil {
-		slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.UpdateQuantityPortfolioStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return err
-	}
+	err := s.transactor.WithinTransaction(ctx, func(ctx context.Context) error {
+		err := s.repo.UpdateQuantityPortfolioStocks(ctx, portfolioID, stockOperations)
+		if err != nil {
+			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.UpdateQuantityPortfolioStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+			return err
+		}
+		
+		err = s.repo.InsertStockOperationsToHistory(ctx, portfolioID, stockOperations)
+		if err != nil {
+			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.InsertStockOperationsToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+			return err
+		}
+		return nil
+	})
 
-	err = s.repo.InsertStockOperationsToHistory(ctx, portfolioID, stockOperations)
 	if err != nil {
-		slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.InsertStockOperationsToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 		return err
 	}
 
