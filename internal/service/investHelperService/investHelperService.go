@@ -508,6 +508,7 @@ func (s *InvestHelperService) SaveStockChangesToPortfolio(
 		slog.Debug("SaveStockChangesToPortfolio finished", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", ticker))
 	}()
 
+	// TODO придумать как обернуть обе операции в транзакцию
 	err := s.saveStockChangesToPortfolio(ctx, portfolioID, ticker, weight, quantity)
 	if err != nil {
 		return model.Stock{}, err

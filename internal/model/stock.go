@@ -45,3 +45,13 @@ type StockPurchase struct {
 	LotsQuantity decimal.Decimal
 	StockPrice   decimal.Decimal
 }
+
+type StockRemaining struct {
+	RowID       int64
+	PortfolioID int64
+	Ticker      string
+	Quantity    int
+	Price       decimal.Decimal
+	DtCreate    time.Time
+	DtUpdate    time.Time
+}

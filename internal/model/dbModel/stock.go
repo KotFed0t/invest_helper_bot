@@ -23,3 +23,13 @@ type StockOperation struct {
 	Currency    string          `db:"currency"`
 	DtCreate    time.Time       `db:"dt_create"`
 }
+
+type StockRemaining struct {
+	RowID       int64           `db:"row_id"`
+	PortfolioID int64           `db:"portfolio_id"`
+	Ticker      string          `db:"ticker"`
+	Quantity    int             `db:"quantity"`
+	Price       decimal.Decimal `db:"price"`
+	DtCreate    time.Time       `db:"dt_create"`
+	DtUpdate    time.Time       `db:"dt_update"`
+}
