@@ -32,3 +32,15 @@ func ConvertPortfolio(dbPortfolio dbModel.Portfolio) model.Portfolio {
 		PortfolioName: dbPortfolio.Name,
 	}
 }
+
+func ConvertStockRemaining(stockRemaining dbModel.StockRemaining) model.StockRemaining {
+	return model.StockRemaining{
+		RowID: stockRemaining.RowID,
+		PortfolioID: stockRemaining.PortfolioID,
+		Ticker: stockRemaining.Ticker,
+		Quantity: stockRemaining.Quantity,
+		Price: stockRemaining.Price,
+		DtCreate: stockRemaining.DtCreate,
+		DtUpdate: stockRemaining.DtUpdate,
+	}
+}

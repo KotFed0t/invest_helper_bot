@@ -39,6 +39,9 @@ type Cache interface {
 	FlushPortfolioCache(ctx context.Context, portfolioID int64) error
 	FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error
 	FlushPortfolioStocksPagesCache(ctx context.Context, portfolioID int64) error
+	SetStockAvgPrices(ctx context.Context, portfolioID int64, stockAvgPrices ...model.StockAvgPrice) error
+	GetStockAvgPrice(ctx context.Context, portfolioID int64, ticker string) (decimal.Decimal, error)
+	GetStockAvgPrices(ctx context.Context, portfolioID int64, tickers ...string) (map[string]decimal.Decimal, error)
 }
 
 type Transactor interface {
@@ -68,6 +71,12 @@ type Repository interface {
 	GetAllPortfolioNamesByUserID(ctx context.Context, userID int64) (portfolioNames map[int64]string, err error)
 	UpdateQuantityPortfolioStocks(ctx context.Context, portfolioID int64, stocks []model.StockOperation) (err error)
 	InsertStockOperationsToHistory(ctx context.Context, portfolioID int64, stockOperation []model.StockOperation) (err error)
+	GetStockRemainingsForUpdate(ctx context.Context, portfolioID int64, ticker string) (stockRemainings []model.StockRemaining, err error)
+	DecreaseStockRemaining(ctx context.Context, rowID int64, quantity int) (err error)
+	DeleteStockRemainings(ctx context.Context, rowIDs ...int64) (err error)
+	InsertStockRemaining(ctx context.Context, portfolioID int64, stockRemaining model.StockRemaining) (err error)
+	GetAverageStockPurchasePrice(ctx context.Context, portfolioID int64, ticker string) (avgPrice decimal.Decimal, err error)
+	GetAverageStockPurchasePrices(ctx context.Context, portfolioID int64, tickers ...string) (avgPrices map[string]decimal.Decimal, err error)
 }
 
 type ReportGenerator interface {
@@ -171,7 +180,7 @@ func (s *InvestHelperService) getPortfolioStocksForPage(ctx context.Context, por
 		return nil, err
 	}
 
-	stocks, err = s.enrichStocks(ctx, stocksDb, portfolioBalance, nil)
+	stocks, err = s.enrichStocks(ctx, stocksDb, portfolioBalance, nil, portfolioID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +378,16 @@ func (s *InvestHelperService) calculatePortfolioSummary(
 		return model.PortfolioSummary{}, errors.New("empty stocks slice")
 	}
 
+	tickers := make([]string, 0, len(stocks))
+	for _, stock := range stocks {
+		tickers = append(tickers, stock.Ticker)
+	}
+
+	avgPrices, err := s.getStockAvgPrices(ctx, PortfolioID, tickers...)
+	if err != nil {
+		return model.PortfolioSummary{}, fmt.Errorf("can't get avg prices: %w", err)
+	}
+
 	for _, stock := range stocks {
 		stockInfo, ok := stocksInfoMap[stock.Ticker]
 		if !ok {
@@ -378,10 +397,24 @@ func (s *InvestHelperService) calculatePortfolioSummary(
 		if !stock.TargetWeight.IsZero() {
 			summary.BalanceInsideIndex = summary.BalanceInsideIndex.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
 			summary.TotalWeight = summary.TotalWeight.Add(stock.TargetWeight)
+			summary.GrowthSumInsideIndex = summary.GrowthSumInsideIndex.Add(s.calculateGrowthSum(avgPrices[stock.Ticker], stockInfo.Price, stock.Quantity))
 		} else {
 			summary.BalanceOutsideIndex = summary.BalanceOutsideIndex.Add(stockInfo.Price.Mul(decimal.NewFromInt(int64(stock.Quantity))))
 			summary.StocksOutsideIndexCnt++
+			summary.GrowthSumOutsideIndex = summary.GrowthSumOutsideIndex.Add(s.calculateGrowthSum(avgPrices[stock.Ticker], stockInfo.Price, stock.Quantity))
 		}
+	}
+
+	if summary.BalanceInsideIndex.Sub(summary.GrowthSumInsideIndex).IsPositive() {
+		summary.GrowthPercentInsideIndex = summary.GrowthSumInsideIndex.
+			Div(summary.BalanceInsideIndex.Sub(summary.GrowthSumInsideIndex)).
+			Mul(decimal.NewFromInt(100))
+	}
+
+	if summary.BalanceOutsideIndex.Sub(summary.GrowthSumOutsideIndex).IsPositive() {
+		summary.GrowthPercentOutsideIndex = summary.GrowthSumOutsideIndex.
+			Div(summary.BalanceOutsideIndex.Sub(summary.GrowthSumOutsideIndex)).
+			Mul(decimal.NewFromInt(100))
 	}
 
 	if summary.BalanceInsideIndex.IsPositive() {
@@ -456,12 +489,20 @@ func (s *InvestHelperService) GetPortfolioStockInfo(ctx context.Context, ticker 
 		return model.Stock{}, err
 	}
 
+	avgPrice, err := s.getStockAvgPrice(ctx, ticker, portfolioID)
+	if err != nil {
+		return model.Stock{}, fmt.Errorf("can't get avgStockPrice: %w", err)
+	}
+
 	stock = model.Stock{
-		StockBase:  stockDB,
-		Shortname:  stockInfo.Shortname,
-		Lotsize:    stockInfo.Lotsize,
-		Price:      stockInfo.Price,
-		TotalPrice: stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDB.Quantity))),
+		StockBase:     stockDB,
+		Shortname:     stockInfo.Shortname,
+		Lotsize:       stockInfo.Lotsize,
+		Price:         stockInfo.Price,
+		TotalPrice:    stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDB.Quantity))),
+		AvgPrice:      avgPrice,
+		GrowthPercent: s.calculateGrowthPercent(avgPrice, stockInfo.Price),
+		GrowthSum:     s.calculateGrowthSum(avgPrice, stockInfo.Price, stockDB.Quantity),
 	}
 
 	if !portfolioSummary.BalanceInsideIndex.IsZero() {
@@ -474,22 +515,34 @@ func (s *InvestHelperService) GetPortfolioStockInfo(ctx context.Context, ticker 
 	return stock, nil
 }
 
-func (s *InvestHelperService) saveStockChangesToPortfolio(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) error {
-	rqID := utils.GetRequestIDFromCtx(ctx)
-	op := "InvestHelperService.saveStockChangesToPortfolio"
+func (s *InvestHelperService) calculateGrowthPercent(avgPurchasePrice, currentPrice decimal.Decimal) decimal.Decimal {
+	if avgPurchasePrice.IsZero() || currentPrice.IsZero() {
+		return decimal.Decimal{}
+	}
+	return currentPrice.Sub(avgPurchasePrice).Div(avgPurchasePrice).Mul(decimal.NewFromInt(100))
+}
 
-	err := s.repo.UpdatePortfolioStock(ctx, portfolioID, ticker, weight, quantity)
-	if err != nil {
-		slog.Error("got error from repo.UpdatePortfolioStock", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return err
+func (s *InvestHelperService) calculateGrowthSum(avgPurchasePrice, currentPrice decimal.Decimal, quantity int) decimal.Decimal {
+	if avgPurchasePrice.IsZero() || currentPrice.IsZero() {
+		return decimal.Decimal{}
+	}
+	return currentPrice.Mul(decimal.NewFromInt(int64(quantity))).Sub(avgPurchasePrice.Mul(decimal.NewFromInt(int64(quantity))))
+}
+
+func (s *InvestHelperService) getStockAvgPrice(ctx context.Context, ticker string, portfolioID int64) (decimal.Decimal, error) {
+	avgPrice, err := s.cache.GetStockAvgPrice(ctx, portfolioID, ticker)
+	if err == nil {
+		return avgPrice, nil
 	}
 
-	err = s.cache.FlushPortfolioCache(ctx, portfolioID) // вызываем синхронно, так как конкурентно может не успеть удалиться и получим старую инфу
-	if err != nil {
-		slog.Error("got error from cache.FlushPortfolioCache", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+	avgPrice, err = s.repo.GetAverageStockPurchasePrice(ctx, portfolioID, ticker)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return decimal.Decimal{}, err
 	}
 
-	return nil
+	go s.cache.SetStockAvgPrices(ctx, portfolioID, model.StockAvgPrice{Ticker: ticker, AvgPrice: avgPrice})
+
+	return avgPrice, nil
 }
 
 func (s *InvestHelperService) SaveStockChangesToPortfolio(
@@ -508,32 +561,20 @@ func (s *InvestHelperService) SaveStockChangesToPortfolio(
 		slog.Debug("SaveStockChangesToPortfolio finished", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", ticker))
 	}()
 
-	// TODO придумать как обернуть обе операции в транзакцию
-	err := s.saveStockChangesToPortfolio(ctx, portfolioID, ticker, weight, quantity)
-	if err != nil {
-		return model.Stock{}, err
+	if quantity == nil { // если было только изменение веса
+		err := s.repo.UpdatePortfolioStock(ctx, portfolioID, ticker, weight, quantity)
+		if err != nil {
+			return model.Stock{}, err
+		}
+		_ = s.cache.FlushPortfolioCache(ctx, portfolioID) // вызываем синхронно, так как конкурентно может не успеть удалиться и получим старую инфу
+
+		return s.GetPortfolioStockInfo(ctx, ticker, portfolioID)
 	}
 
-	if quantity != nil { // если была покупка/продажа сохраняем операцию в историю
-		go s.saveStockOperationToHistory(context.WithoutCancel(ctx), portfolioID, ticker, *quantity, price)
-	}
-
-	return s.GetPortfolioStockInfo(ctx, ticker, portfolioID)
-}
-
-func (s *InvestHelperService) saveStockOperationToHistory(ctx context.Context, portfolioID int64, ticker string, quantity int, price *decimal.Decimal) error {
-	rqID := utils.GetRequestIDFromCtx(ctx)
-	op := "InvestHelperService.saveStockOperationToHistory"
-
-	slog.Debug("saveStockOperationToHistory start", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", ticker))
-	defer func() {
-		slog.Debug("saveStockOperationToHistory finished", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", ticker))
-	}()
-
+	// если была покупка/продажа
 	stockInfo, err := s.GetStockInfo(ctx, ticker)
 	if err != nil {
-		slog.Error("got error from GetStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return err
+		return model.Stock{}, err
 	}
 
 	if price == nil { // если не передали кастомный price - используем актульный
@@ -543,20 +584,91 @@ func (s *InvestHelperService) saveStockOperationToHistory(ctx context.Context, p
 	stockOperation := model.StockOperation{
 		Ticker:     stockInfo.Ticker,
 		Shortname:  stockInfo.Shortname,
-		Quantity:   quantity,
+		Quantity:   *quantity,
 		Price:      *price,
-		TotalPrice: price.Mul(decimal.NewFromInt(int64(quantity))),
+		TotalPrice: price.Mul(decimal.NewFromInt(int64(*quantity))),
 		Currency:   stockInfo.CurrencyID,
 		DtCreate:   time.Now(),
 	}
 
-	err = s.repo.InsertStockOperationToHistory(ctx, portfolioID, stockOperation)
+	err = s.transactor.WithinTransaction(ctx, func(ctx context.Context) error {
+		err = s.repo.UpdatePortfolioStock(ctx, portfolioID, ticker, weight, quantity)
+		if err != nil {
+			return err
+		}
+
+		err = s.repo.InsertStockOperationToHistory(ctx, portfolioID, stockOperation)
+		if err != nil {
+			return err
+		}
+
+		if *quantity < 0 { // продажа
+			stockRemainings, err := s.repo.GetStockRemainingsForUpdate(ctx, portfolioID, ticker)
+			if err != nil {
+				return err
+			}
+
+			rowsToDelete := make([]int64, 0)
+			sellQuantity := *quantity * -1 // make it positive to convenient calculation
+			for _, stockRemaining := range stockRemainings {
+				if sellQuantity <= 0 {
+					break
+				}
+
+				if sellQuantity-stockRemaining.Quantity >= 0 {
+					rowsToDelete = append(rowsToDelete, stockRemaining.RowID)
+					sellQuantity -= stockRemaining.Quantity
+				} else {
+					err = s.repo.DecreaseStockRemaining(ctx, stockRemaining.RowID, sellQuantity)
+					if err != nil {
+						return err
+					}
+					sellQuantity = 0
+					break
+				}
+			}
+
+			if sellQuantity > 0 {
+				return fmt.Errorf("not enough stock remainings")
+			}
+
+			if len(rowsToDelete) > 0 {
+				err = s.repo.DeleteStockRemainings(ctx, rowsToDelete...)
+				if err != nil {
+					return err
+				}
+			}
+		} else { // покупка
+			stockRemaining := model.StockRemaining{
+				PortfolioID: portfolioID,
+				Ticker:      ticker,
+				Quantity:    *quantity,
+				Price:       *price,
+				DtCreate:    time.Now(),
+				DtUpdate:    time.Now(),
+			}
+
+			err = s.repo.InsertStockRemaining(ctx, portfolioID, stockRemaining)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		slog.Error("got error from repo.InsertStockOperationToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return err
+		return model.Stock{}, err
 	}
 
-	return nil
+	avgPrice, err := s.repo.GetAverageStockPurchasePrice(ctx, portfolioID, ticker)
+	if err == nil || errors.Is(err, repository.ErrNotFound) {
+		_ = s.cache.SetStockAvgPrices(ctx, portfolioID, model.StockAvgPrice{Ticker: ticker, AvgPrice: avgPrice})
+	}
+
+	_ = s.cache.FlushPortfolioCache(ctx, portfolioID) // вызываем синхронно, так как конкурентно может не успеть удалиться и получим старую инфу
+
+	return s.GetPortfolioStockInfo(ctx, ticker, portfolioID)
 }
 
 func (s *InvestHelperService) deleteStockFromPortfolio(ctx context.Context, portfolioID int64, ticker string) error {
@@ -599,6 +711,7 @@ func (s *InvestHelperService) enrichStocks(
 	stocksDb []model.StockBase,
 	portfolioBalance decimal.Decimal,
 	stocksInfoMap map[string]moexModel.StockInfo,
+	portfolioID int64,
 ) (stocks []model.Stock, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "InvestHelperService.enrichStocks"
@@ -607,16 +720,21 @@ func (s *InvestHelperService) enrichStocks(
 		return []model.Stock{}, nil
 	}
 
-	if stocksInfoMap == nil {
-		tickers := make([]string, 0, len(stocksDb))
-		for _, stock := range stocksDb {
-			tickers = append(tickers, stock.Ticker)
-		}
+	tickers := make([]string, 0, len(stocksDb))
+	for _, stock := range stocksDb {
+		tickers = append(tickers, stock.Ticker)
+	}
 
+	if stocksInfoMap == nil {
 		stocksInfoMap, err = s.getStocksInfo(ctx, tickers)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	avgPrices, err := s.getStockAvgPrices(ctx, portfolioID, tickers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed on getting avg prices: %w", err)
 	}
 
 	stocks = make([]model.Stock, 0, len(stocksDb))
@@ -626,12 +744,17 @@ func (s *InvestHelperService) enrichStocks(
 			slog.Warn("ticker not found in stocksInfoMap", slog.String("rqID", rqID), slog.String("op", op), slog.String("ticker", stockDb.Ticker))
 		}
 
+		avgPrice := avgPrices[stockDb.Ticker]
+
 		stock := model.Stock{
-			StockBase:  stockDb,
-			Shortname:  stockInfo.Shortname,
-			Lotsize:    stockInfo.Lotsize,
-			Price:      stockInfo.Price,
-			TotalPrice: stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDb.Quantity))),
+			StockBase:     stockDb,
+			Shortname:     stockInfo.Shortname,
+			Lotsize:       stockInfo.Lotsize,
+			Price:         stockInfo.Price,
+			TotalPrice:    stockInfo.Price.Mul(decimal.NewFromInt(int64(stockDb.Quantity))),
+			AvgPrice:      avgPrice,
+			GrowthPercent: s.calculateGrowthPercent(avgPrice, stockInfo.Price),
+			GrowthSum:     s.calculateGrowthSum(avgPrice, stockInfo.Price, stockDb.Quantity),
 		}
 
 		if !portfolioBalance.IsZero() {
@@ -642,6 +765,28 @@ func (s *InvestHelperService) enrichStocks(
 	}
 
 	return stocks, nil
+}
+
+func (s *InvestHelperService) getStockAvgPrices(ctx context.Context, portfolioID int64, tickers ...string) (map[string]decimal.Decimal, error) {
+	avgPrices, err := s.cache.GetStockAvgPrices(ctx, portfolioID, tickers...)
+	if err == nil {
+		return avgPrices, nil
+	}
+
+	avgPrices, err = s.repo.GetAverageStockPurchasePrices(ctx, portfolioID, tickers...)
+	if err != nil {
+		return nil, err
+	}
+
+	avgPricesToCache := make([]model.StockAvgPrice, 0, len(tickers))
+	for _, ticker := range tickers {
+		// если в БД нет цены - то в кэш записываем с ценой 0
+		avgPricesToCache = append(avgPricesToCache, model.StockAvgPrice{Ticker: ticker, AvgPrice: avgPrices[ticker]})
+	}
+
+	go s.cache.SetStockAvgPrices(ctx, portfolioID, avgPricesToCache...)
+
+	return avgPrices, nil
 }
 
 func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID int64, purchaseSum decimal.Decimal) ([]model.StockPurchase, error) {
@@ -677,7 +822,7 @@ func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID
 		return nil, err
 	}
 
-	stocks, err := s.enrichStocks(ctx, stocksDb, portfolioSummary.BalanceInsideIndex, nil)
+	stocks, err := s.enrichStocks(ctx, stocksDb, portfolioSummary.BalanceInsideIndex, nil, portfolioID)
 	if err != nil {
 		return nil, err
 	}
@@ -918,7 +1063,7 @@ func (s *InvestHelperService) GeneratePortfoliosReport(ctx context.Context, chat
 			return nil, "", err
 		}
 
-		enrichedStocks, err := s.enrichStocks(ctx, portfolioStocks, portfolioSummary.BalanceInsideIndex, stocksInfoMap)
+		enrichedStocks, err := s.enrichStocks(ctx, portfolioStocks, portfolioSummary.BalanceInsideIndex, stocksInfoMap, portfolioID)
 		if err != nil {
 			slog.Error("GeneratePortfolioReport failed on enrichStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()), slog.Int64("portfolioID", portfolioID))
 			return nil, "", err
@@ -988,7 +1133,7 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.UpdateQuantityPortfolioStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 			return err
 		}
-		
+
 		err = s.repo.InsertStockOperationsToHistory(ctx, portfolioID, stockOperations)
 		if err != nil {
 			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.InsertStockOperationsToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
@@ -1007,3 +1152,6 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 
 	return nil
 }
+
+//TODO есть единичное получение и сохранение и также все массовые получения.
+// Осталось только покупка массовая

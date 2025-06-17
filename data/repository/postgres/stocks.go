@@ -13,6 +13,7 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver
+	"github.com/jmoiron/sqlx"
 	"github.com/shopspring/decimal"
 )
 
@@ -191,6 +192,7 @@ func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64
 	return nil
 }
 
+// TODO мб переписать на атомарное обновление веса? То есть как и quantity плюсовать. Чтобы не был важен порядок апдейтов если они параллельно идут. (в контроллере сразу высчитывать старый - новый)
 func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) (err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `
@@ -435,6 +437,7 @@ func (r *Postgres) RebalanceWeights(ctx context.Context, portfolioID int64) (err
 			SELECT SUM(weight) as total_weight
 			FROM stocks_portfolio_details
 			WHERE portfolio_id = $1 AND weight > 0
+			FOR UPDATE
 		)
 
 		UPDATE stocks_portfolio_details s
@@ -744,6 +747,7 @@ func (r *Postgres) GetAverageStockPurchasePrice(ctx context.Context, portfolioID
 	}
 	query := `
 		SELECT SUM(quantity * price)/NULLIF(SUM(quantity), 0) as avg_price
+		FROM stock_remainings
 		WHERE portfolio_id = $1
 		AND ticker = $2
         `
@@ -763,25 +767,40 @@ func (r *Postgres) GetAverageStockPurchasePrice(ctx context.Context, portfolioID
 		}
 	}()
 
-	err = r.txOrDb(ctx).QueryRowxContext(ctx, query, portfolioID, ticker).Scan(&avgPrice)
+	var avgPricePtr *decimal.Decimal
+	err = r.txOrDb(ctx).QueryRowxContext(ctx, query, portfolioID, ticker).Scan(&avgPricePtr)
 
-	if err != nil {
+	if err != nil || avgPricePtr == nil {
 		return decimal.Decimal{}, err
 	}
-	return avgPrice, nil
+	return *avgPricePtr, nil
 }
 
-func (r *Postgres) GetAverageStockPurchasePrices(ctx context.Context, portfolioID int64) (avgPrices map[string]decimal.Decimal, err error) {
+func (r *Postgres) GetAverageStockPurchasePrices(ctx context.Context, portfolioID int64, tickers ...string) (avgPrices map[string]decimal.Decimal, err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "Postgres.GetAverageStockPurchasePrices"
 	params := map[string]any{
 		"portfolioID": portfolioID,
+		"tickers": tickers,
 	}
-	query := `
-		SELECT ticker, SUM(quantity * price)/NULLIF(SUM(quantity), 0) as avg_price
-		WHERE portfolio_id = $1
-		GROUP BY ticker
-        `
+	var query string
+
+	if len(tickers) > 0 {
+		query = `
+				SELECT ticker, SUM(quantity * price)/NULLIF(SUM(quantity), 0) as avg_price
+				FROM stock_remainings
+				WHERE portfolio_id = $1
+				AND ticker = ANY($2)
+				GROUP BY ticker
+				`
+	} else {
+		query = `
+				SELECT ticker, SUM(quantity * price)/NULLIF(SUM(quantity), 0) as avg_price
+				FROM stock_remainings
+				WHERE portfolio_id = $1
+				GROUP BY ticker
+				`
+	}
 
 	slog.Debug(
 		"GetAverageStockPurchasePrices start",
@@ -797,8 +816,14 @@ func (r *Postgres) GetAverageStockPurchasePrices(ctx context.Context, portfolioI
 			slog.Debug("GetAverageStockPurchasePrices completed", slog.String("rqID", rqID), slog.String("op", op))
 		}
 	}()
+	
+	var rows *sqlx.Rows
+	if len(tickers) > 0 {
+		rows, err = r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID, tickers)
+	} else {
+		rows, err = r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID)
+	}
 
-	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID)
 	if err != nil {
 		return nil, err
 	}
@@ -818,12 +843,12 @@ func (r *Postgres) GetAverageStockPurchasePrices(ctx context.Context, portfolioI
 	return avgPrices, nil
 }
 
-func (r *Postgres) InsertStockOperationToRemainings(ctx context.Context, portfolioID int64, stockOperation model.StockOperation) (err error) {
+func (r *Postgres) InsertStockRemaining(ctx context.Context, portfolioID int64, stockRemaining model.StockRemaining) (err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "Postgres.InsertStockOperationToRemainings"
 	query := `
 		INSERT INTO stock_remainings(portfolio_id, ticker, quantity, price)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4)
 	`
 
 	slog.Debug(
@@ -831,7 +856,7 @@ func (r *Postgres) InsertStockOperationToRemainings(ctx context.Context, portfol
 		slog.String("rqID", rqID),
 		slog.String("op", op),
 		slog.Int64("portolioID", portfolioID),
-		slog.Any("stockOperation", stockOperation),
+		slog.Any("stockOperation", stockRemaining),
 		slog.String("query", query),
 	)
 	defer func() {
@@ -846,9 +871,9 @@ func (r *Postgres) InsertStockOperationToRemainings(ctx context.Context, portfol
 		ctx,
 		query,
 		portfolioID,
-		stockOperation.Ticker,
-		stockOperation.Quantity,
-		stockOperation.Price,
+		stockRemaining.Ticker,
+		stockRemaining.Quantity,
+		stockRemaining.Price,
 	)
 
 	if err != nil {
@@ -857,12 +882,12 @@ func (r *Postgres) InsertStockOperationToRemainings(ctx context.Context, portfol
 	return nil
 }
 
-func (r *Postgres) InsertStockOperationsToRemainings(ctx context.Context, portfolioID int64, stockOperations []model.StockOperation) (err error) {
+func (r *Postgres) InsertStockRemainings(ctx context.Context, portfolioID int64, stockRemainings []model.StockRemaining) (err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	op := "Postgres.InsertStockOperationsToRemainings"
 	params := map[string]any{
 		"portfolioID":     portfolioID,
-		"stockOperations": stockOperations,
+		"stockOperations": stockRemainings,
 	}
 	query := `
         INSERT INTO stock_remainings(
@@ -879,11 +904,11 @@ func (r *Postgres) InsertStockOperationsToRemainings(ctx context.Context, portfo
             $4::decimal[],
         ) AS u(ticker, quantity, price)`
 
-	tickers := make([]string, 0, len(stockOperations))
-	quantities := make([]int, 0, len(stockOperations))
-	prices := make([]decimal.Decimal, 0, len(stockOperations))
+	tickers := make([]string, 0, len(stockRemainings))
+	quantities := make([]int, 0, len(stockRemainings))
+	prices := make([]decimal.Decimal, 0, len(stockRemainings))
 
-	for _, op := range stockOperations {
+	for _, op := range stockRemainings {
 		tickers = append(tickers, op.Ticker)
 		quantities = append(quantities, op.Quantity)
 		prices = append(prices, op.Price)
@@ -919,10 +944,109 @@ func (r *Postgres) InsertStockOperationsToRemainings(ctx context.Context, portfo
 	return nil
 }
 
-// селект операций по тикеру отсортированным по дате
+// GetStockRemainingsForUpdate - stocks already ordered in ascending order to correct fifo sales calculations and percentage growth calculations
+func (r *Postgres) GetStockRemainingsForUpdate(ctx context.Context, portfolioID int64, ticker string) (stockRemainings []model.StockRemaining, err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	params := map[string]any{
+		"portfolioID": portfolioID,
+		"ticker":      ticker,
+	}
 
-// (по row_id) update единичный (так как все остальное удаляем и только 1 будет апдейтится)
+	query := `
+		SELECT row_id, portfolio_id, ticker, quantity, price, dt_create, dt_update
+		FROM stock_remainings
+		WHERE portfolio_id = $1
+		AND ticker = $2
+		ORDER BY dt_create ASC
+		FOR UPDATE
+	`
 
-// (по row_id) delete для нескольких
+	slog.Debug("GetStockRemainingsForUpdate start", slog.String("rqID", rqID), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("GetStockRemainingsForUpdate failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("GetStockRemainingsForUpdate completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	rows, err := r.txOrDb(ctx).QueryxContext(ctx, query, portfolioID, ticker)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var stockRemaining dbModel.StockRemaining
+		err = rows.StructScan(&stockRemaining)
+		if err != nil {
+			return nil, err
+		}
+		stockRemainings = append(stockRemainings, dbConverter.ConvertStockRemaining(stockRemaining))
+	}
+
+	return stockRemainings, nil
+}
+
+func (r *Postgres) DecreaseStockRemaining(ctx context.Context, rowID int64, quantity int) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	params := map[string]any{
+		"rowID":    rowID,
+		"quantity": quantity,
+	}
+
+	query := `
+		UPDATE stock_remainings
+        SET quantity = quantity - $1
+        WHERE row_id = $2
+	`
+
+	slog.Debug("Postgres.DecreaseStockRemaining start", slog.String("rqID", rqID), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("Postgres.DecreaseStockRemaining failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("Postgres.DecreaseStockRemaining completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, quantity, rowID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Postgres) DeleteStockRemainings(ctx context.Context, rowIDs ...int64) (err error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	params := map[string]any{
+		"rowIDs": rowIDs,
+	}
+
+	query := `
+		DELETE FROM stock_remainings
+        WHERE row_id = ANY($1)
+	`
+
+	slog.Debug("Postgres.DeleteStockRemainings start", slog.String("rqID", rqID), slog.String("query", query), slog.Any("params", params))
+	defer func() {
+		if err != nil {
+			slog.Error("Postgres.DeleteStockRemainings failed", slog.String("rqID", rqID), slog.String("err", err.Error()))
+		} else {
+			slog.Debug("Postgres.DeleteStockRemainings completed", slog.String("rqID", rqID))
+		}
+	}()
+
+	_, err = r.txOrDb(ctx).ExecContext(ctx, query, rowIDs)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // по кэшированию пока хз как лучше. По сути просто все сразу кэшировать (мапу), так как нам надо удостоверяться что именно акции нет, а с единичными так не получится.
+
+// будем хранить все такие по одной и тех которых нет просто с нулем. Операция где все селектим все равно только в portfolioSummary будет.

@@ -13,12 +13,16 @@ type PortfolioPage struct {
 
 type PortfolioSummary struct {
 	Portfolio
-	BalanceInsideIndex    decimal.Decimal
-	BalanceOutsideIndex   decimal.Decimal
-	TotalWeight           decimal.Decimal
-	StocksCount           int
-	StocksOutsideIndexCnt int
-	IndexOffset           decimal.Decimal
+	BalanceInsideIndex        decimal.Decimal
+	BalanceOutsideIndex       decimal.Decimal
+	TotalWeight               decimal.Decimal
+	StocksCount               int
+	StocksOutsideIndexCnt     int
+	IndexOffset               decimal.Decimal
+	GrowthSumInsideIndex      decimal.Decimal
+	GrowthSumOutsideIndex     decimal.Decimal
+	GrowthPercentInsideIndex  decimal.Decimal
+	GrowthPercentOutsideIndex decimal.Decimal
 }
 
 type Portfolio struct {

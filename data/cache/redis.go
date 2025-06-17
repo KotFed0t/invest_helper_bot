@@ -13,6 +13,7 @@ import (
 	"github.com/KotFed0t/invest_helper_bot/internal/model/moexModel"
 	"github.com/KotFed0t/invest_helper_bot/utils"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 )
 
 type RedisCache struct {
@@ -239,8 +240,13 @@ func (r *RedisCache) createPortfolioStockKey(portfolioID int64, ticker string) s
 	return fmt.Sprintf("portfolio:%s:ticker:%s", strconv.FormatInt(portfolioID, 10), ticker)
 }
 
-func (r *RedisCache) createPortfolioStocksPage(portfolioID int64, page int) string {
+func (r *RedisCache) createPortfolioStocksPageKey(portfolioID int64, page int) string {
 	return fmt.Sprintf("portfolio:%s:page:%s", strconv.FormatInt(portfolioID, 10), strconv.Itoa(page))
+}
+
+// avgPrice в начале, чтобы не сносился при flushPortolioCache
+func (r *RedisCache) createPortfolioStockAvgPriceKey(portfolioID int64, ticker string) string {
+	return fmt.Sprintf("avgPrice:portfolio:%s:ticker:%s", strconv.FormatInt(portfolioID, 10), ticker)
 }
 
 func (r *RedisCache) FlushPortfolioSummaryCache(ctx context.Context, portfolioID int64) error {
@@ -314,7 +320,7 @@ func (r *RedisCache) GetPortfolioStocksForPage(ctx context.Context, portfolioID 
 		slog.Debug("GetPortfolioStocksForPage finished", slog.String("rqID", rqID), slog.String("op", op))
 	}()
 
-	key := r.createPortfolioStocksPage(portfolioID, page)
+	key := r.createPortfolioStocksPageKey(portfolioID, page)
 
 	res, err := r.redis.Get(ctx, key).Result()
 	if err != nil {
@@ -347,8 +353,8 @@ func (r *RedisCache) SetPortfolioStocksForPage(ctx context.Context, portfolioID 
 		slog.Debug("SetPortfolioStocksForPage finished", slog.String("rqID", rqID), slog.String("op", op))
 	}()
 
-	key := r.createPortfolioStocksPage(portfolioID, page)
-		
+	key := r.createPortfolioStocksPageKey(portfolioID, page)
+
 	jsonData, err := json.Marshal(stocks)
 	if err != nil {
 		slog.Error(
@@ -368,4 +374,95 @@ func (r *RedisCache) SetPortfolioStocksForPage(ctx context.Context, portfolioID 
 	}
 
 	return nil
+}
+
+func (r *RedisCache) SetStockAvgPrices(ctx context.Context, portfolioID int64, stockAvgPrices ...model.StockAvgPrice) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("start SetStockAvgPrices", slog.String("rqID", rqID))
+
+	if len(stockAvgPrices) == 0 {
+		slog.Warn("no data to SetStockAvgPrices")
+		return nil
+	}
+
+	pipe := r.redis.Pipeline()
+	for _, stock := range stockAvgPrices {
+		key := r.createPortfolioStockAvgPriceKey(portfolioID, stock.Ticker)
+		_ = pipe.Set(ctx, key, stock.AvgPrice, r.cfg.SessionExpiration)
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		slog.Error("failed on pipe.Exec", slog.String("rqID", rqID), slog.String("err", err.Error()))
+	}
+
+	slog.Debug("SetStocks completed", slog.String("rqID", rqID))
+
+	return nil
+}
+
+func (r *RedisCache) GetStockAvgPrice(ctx context.Context, portfolioID int64, ticker string) (decimal.Decimal, error) {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "RedisCache.GetStockAvgPrice"
+	slog.Debug("RedisCache.GetStockAvgPrice start", slog.String("rqID", rqID))
+	key := r.createPortfolioStockAvgPriceKey(portfolioID, ticker)
+
+	res, err := r.redis.Get(ctx, key).Result()
+	if err != nil {
+		slog.Warn("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", ticker))
+		return decimal.Decimal{}, err
+	}
+
+	avgPrice, err := decimal.NewFromString(res)
+	if err != nil {
+		slog.Error("incorrect avg price", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+	}
+
+	slog.Debug("GetStockInfo finished", slog.String("rqID", rqID))
+
+	return avgPrice, nil
+}
+
+func (r *RedisCache) GetStockAvgPrices(ctx context.Context, portfolioID int64, tickers ...string) (map[string]decimal.Decimal, error) {
+	op := "RedisCache.GetStockAvgPrices"
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	slog.Debug("GetStockAvgPrices start", slog.String("rqID", rqID))
+
+	if len(tickers) == 0 {
+		return nil, ErrNotFound
+	}
+
+	keys := make([]string, 0, len(tickers))
+	for _, ticker := range tickers {
+		keys = append(keys, r.createPortfolioStockAvgPriceKey(portfolioID, ticker))
+	}
+
+	values, err := r.redis.MGet(ctx, keys...).Result()
+	if err != nil {
+		slog.Error("failed on redis.MGet", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.Any("op", op))
+		return nil, err
+	}
+
+	m := make(map[string]decimal.Decimal, len(values))
+	for i, value := range values {
+		if value == nil {
+			return nil, ErrNotFound
+		}
+
+		avgPriceStr, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("can't cast values from redis to string")
+		}
+
+		avgPrice, err := decimal.NewFromString(avgPriceStr)
+		if err != nil {
+			return nil, fmt.Errorf("can't create decimal from cache values: %w", err)
+		}
+
+		m[tickers[i]] = avgPrice
+	}
+
+	slog.Debug("GetStockAvgPrices finished", slog.String("rqID", rqID))
+
+	return m, nil
 }

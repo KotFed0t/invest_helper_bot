@@ -8,11 +8,14 @@ import (
 
 type Stock struct {
 	StockBase
-	Shortname    string
-	Lotsize      int
-	ActualWeight decimal.Decimal
-	Price        decimal.Decimal
-	TotalPrice   decimal.Decimal
+	Shortname     string
+	Lotsize       int
+	ActualWeight  decimal.Decimal
+	Price         decimal.Decimal
+	TotalPrice    decimal.Decimal
+	AvgPrice      decimal.Decimal
+	GrowthPercent decimal.Decimal
+	GrowthSum     decimal.Decimal
 }
 
 type StockBase struct {
@@ -54,4 +57,9 @@ type StockRemaining struct {
 	Price       decimal.Decimal
 	DtCreate    time.Time
 	DtUpdate    time.Time
+}
+
+type StockAvgPrice struct {
+	Ticker   string
+	AvgPrice decimal.Decimal
 }
