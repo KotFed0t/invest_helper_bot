@@ -388,7 +388,7 @@ func (r *RedisCache) SetStockAvgPrices(ctx context.Context, portfolioID int64, s
 	pipe := r.redis.Pipeline()
 	for _, stock := range stockAvgPrices {
 		key := r.createPortfolioStockAvgPriceKey(portfolioID, stock.Ticker)
-		_ = pipe.Set(ctx, key, stock.AvgPrice, r.cfg.SessionExpiration)
+		_ = pipe.Set(ctx, key, stock.AvgPrice.String(), r.cfg.SessionExpiration)
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -396,7 +396,7 @@ func (r *RedisCache) SetStockAvgPrices(ctx context.Context, portfolioID int64, s
 		slog.Error("failed on pipe.Exec", slog.String("rqID", rqID), slog.String("err", err.Error()))
 	}
 
-	slog.Debug("SetStocks completed", slog.String("rqID", rqID))
+	slog.Debug("SetStockAvgPrices completed", slog.String("rqID", rqID))
 
 	return nil
 }

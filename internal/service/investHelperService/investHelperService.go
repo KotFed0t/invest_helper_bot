@@ -77,6 +77,7 @@ type Repository interface {
 	InsertStockRemaining(ctx context.Context, portfolioID int64, stockRemaining model.StockRemaining) (err error)
 	GetAverageStockPurchasePrice(ctx context.Context, portfolioID int64, ticker string) (avgPrice decimal.Decimal, err error)
 	GetAverageStockPurchasePrices(ctx context.Context, portfolioID int64, tickers ...string) (avgPrices map[string]decimal.Decimal, err error)
+	InsertStockRemainings(ctx context.Context, portfolioID int64, stockRemainings []model.StockRemaining) (err error)
 }
 
 type ReportGenerator interface {
@@ -1114,37 +1115,67 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 	slog.Debug("ApplyCalculatedPurchaseToPortfolio start", slog.String("rqID", rqID), slog.String("op", op))
 
 	stockOperations := make([]model.StockOperation, 0, len(stocksToPurchase))
+	stockRemainings := make([]model.StockRemaining, 0, len(stocksToPurchase))
+	tickers := make([]string, 0, len(stocksToPurchase))
 	for _, stockPurchase := range stocksToPurchase {
+		quantity := stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize)
 		stockOperation := model.StockOperation{
 			Ticker:     stockPurchase.Ticker,
 			Shortname:  stockPurchase.Shortname,
-			Quantity:   int(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize)),
+			Quantity:   int(quantity),
 			Price:      stockPurchase.StockPrice,
-			TotalPrice: stockPurchase.StockPrice.Mul(decimal.NewFromInt(stockPurchase.LotsQuantity.IntPart() * int64(stockPurchase.LotSize))),
+			TotalPrice: stockPurchase.StockPrice.Mul(decimal.NewFromInt(quantity)),
 			Currency:   "RUB",
 			DtCreate:   time.Now(),
 		}
 		stockOperations = append(stockOperations, stockOperation)
+
+		stockRemaining := model.StockRemaining{
+			PortfolioID: portfolioID,
+			Ticker:      stockPurchase.Ticker,
+			Quantity:    int(quantity),
+			Price:       stockPurchase.StockPrice,
+			DtCreate:    time.Now(),
+			DtUpdate:    time.Now(),
+		}
+		stockRemainings = append(stockRemainings, stockRemaining)
+
+		tickers = append(tickers, stockPurchase.Ticker)
 	}
 
 	err := s.transactor.WithinTransaction(ctx, func(ctx context.Context) error {
 		err := s.repo.UpdateQuantityPortfolioStocks(ctx, portfolioID, stockOperations)
 		if err != nil {
-			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.UpdateQuantityPortfolioStocks", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 			return err
 		}
 
 		err = s.repo.InsertStockOperationsToHistory(ctx, portfolioID, stockOperations)
 		if err != nil {
-			slog.Error("ApplyCalculatedPurchaseToPortfolio failed on repo.InsertStockOperationsToHistory", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
 			return err
 		}
+
+		err = s.repo.InsertStockRemainings(ctx, portfolioID, stockRemainings)
+		if err != nil {
+			return err
+		}
+
 		return nil
 	})
 
 	if err != nil {
 		return err
 	}
+
+	go func() {
+		avgPrices, err := s.repo.GetAverageStockPurchasePrices(context.WithoutCancel(ctx), portfolioID, tickers...)
+		if err == nil {
+			avgPricesToCache := make([]model.StockAvgPrice, 0, len(stocksToPurchase))
+			for _, stock := range stocksToPurchase {
+				avgPricesToCache = append(avgPricesToCache, model.StockAvgPrice{Ticker: stock.Ticker, AvgPrice: avgPrices[stock.Ticker]})
+			}
+			_ = s.cache.SetStockAvgPrices(context.WithoutCancel(ctx), portfolioID, avgPricesToCache...)
+		}
+	}()
 
 	go s.cache.FlushPortfolioCache(context.WithoutCancel(ctx), portfolioID)
 
@@ -1153,5 +1184,5 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 	return nil
 }
 
-//TODO есть единичное получение и сохранение и также все массовые получения.
-// Осталось только покупка массовая
+//TODO все вроде готово, теперь можно выводить на интерфейс и проверить правильность работы в совокупности.
+// ну и в отчет добавить можно проценты роста и суммы роста

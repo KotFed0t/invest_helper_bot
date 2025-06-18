@@ -901,7 +901,7 @@ func (r *Postgres) InsertStockRemainings(ctx context.Context, portfolioID int64,
         FROM UNNEST(
             $2::text[],
             $3::integer[],
-            $4::decimal[],
+            $4::decimal[]
         ) AS u(ticker, quantity, price)`
 
 	tickers := make([]string, 0, len(stockRemainings))

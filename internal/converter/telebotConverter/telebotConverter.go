@@ -21,8 +21,13 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 	sb.WriteString("💰 Балансы: \n")
 	sb.WriteString(fmt.Sprintf("▸ в индексе: %s ₽\n", portfolio.BalanceInsideIndex.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ вне индекса: %s ₽\n\n", portfolio.BalanceOutsideIndex.StringFixed(2)))
-	sb.WriteString(fmt.Sprintf("⚖️ Текущий вес %s %%\n", portfolio.TotalWeight.StringFixed(2)))
-	sb.WriteString(fmt.Sprintf("🔀 Отклонение от индекса %s %%\n\n", portfolio.IndexOffset.StringFixed(2)))
+
+	sb.WriteString("📈 Показатели роста: \n")
+	sb.WriteString(fmt.Sprintf("▸ в индексе: %s%% (%s ₽)\n", portfolio.GrowthPercentInsideIndex.StringFixed(2), portfolio.GrowthSumInsideIndex.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ вне индекса: %s%% (%s ₽)\n\n", portfolio.GrowthPercentOutsideIndex.StringFixed(2), portfolio.GrowthSumOutsideIndex.StringFixed(2)))
+
+	sb.WriteString(fmt.Sprintf("⚖️ Текущий вес %s%%\n", portfolio.TotalWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("🔀 Отклонение от индекса %s%%\n\n", portfolio.IndexOffset.StringFixed(2)))
 
 	// Состав портфеля
 	sb.WriteString("📋 Состав портфеля:\n\n")
@@ -34,13 +39,13 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 		stockBtns = append(stockBtns, markup.Data(stock.Ticker, tgCallback.EditStockPrefix+stock.Ticker))
 
 		sb.WriteString(fmt.Sprintf("%s %s (%s)\n", ordinal, stock.Ticker, stock.Shortname))
-		sb.WriteString(fmt.Sprintf("▸ Вес: %s %%\n", stock.ActualWeight.StringFixed(2)))
-		sb.WriteString(fmt.Sprintf("▸ целевой вес: %s %%\n", stock.TargetWeight.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ Вес: %s%%\n", stock.ActualWeight.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ целевой вес: %s%%\n", stock.TargetWeight.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ ср. цена покупки: %s ₽\n", stock.AvgPrice.StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ рост: %s%% (%s ₽)\n", stock.GrowthPercent.StringFixed(2), stock.GrowthSum.StringFixed(2)))
 		sb.WriteString(fmt.Sprintf("▸ Кол-во: %d шт.\n", stock.Quantity))
 		sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
-		sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n", stock.TotalPrice.StringFixed(2)))
-		sb.WriteString(fmt.Sprintf("▸ Размер лота: %d\n", stock.Lotsize))
-		sb.WriteString(fmt.Sprintf("▸ Цена лота: %s ₽\n\n", stock.Price.Mul(decimal.NewFromInt(int64(stock.Lotsize))).StringFixed(2)))
+		sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n\n", stock.TotalPrice.StringFixed(2)))
 	}
 
 	paginationBtns := make([]tele.Btn, 0, 3)
@@ -103,8 +108,10 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 	sb := strings.Builder{}
 
 	sb.WriteString(fmt.Sprintf("%s (%s)\n", stock.Ticker, stock.Shortname))
-	sb.WriteString(fmt.Sprintf("▸ Вес: %s %%\n", stock.ActualWeight.StringFixed(2)))
-	sb.WriteString(fmt.Sprintf("▸ Целевой вес: %s %%\n", stock.TargetWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Вес: %s%%\n", stock.ActualWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ Целевой вес: %s%%\n", stock.TargetWeight.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ ср. цена покупки: %s ₽\n", stock.AvgPrice.StringFixed(2)))
+	sb.WriteString(fmt.Sprintf("▸ рост: %s%% (%s ₽)\n", stock.GrowthPercent.StringFixed(2), stock.GrowthSum.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ Кол-во: %d шт.\n", stock.Quantity))
 	sb.WriteString(fmt.Sprintf("▸ Цена акции: %s ₽\n", stock.Price.StringFixed(2)))
 	sb.WriteString(fmt.Sprintf("▸ Стоимость: %s ₽\n", stock.TotalPrice.StringFixed(2)))
@@ -134,7 +141,7 @@ func StockDetailResponse(stock model.Stock, stockChanges *model.StockChanges) (t
 	if stockChanges != nil {
 		sb.WriteString("\nИзменения:\n")
 		if stockChanges.NewTargetWeight != nil {
-			sb.WriteString(fmt.Sprintf("▸ Новый целевой вес: %s %%\n", stockChanges.NewTargetWeight.StringFixed(2)))
+			sb.WriteString(fmt.Sprintf("▸ Новый целевой вес: %s%%\n", stockChanges.NewTargetWeight.StringFixed(2)))
 		}
 
 		if stockChanges.Quantity != nil {
@@ -223,12 +230,12 @@ func CalculatedStockPurchaseResponse(stocks []model.StockPurchase, purchaseSum d
 	actualPurchaseSum := decimal.NewFromInt(0)
 
 	backToPortfolioBtn := markup.Data("назад к портфелю", tgCallback.BackToPortolio)
-	
+
 	var applyPurchaseToPortfolioBtn tele.Btn
 	if len(stocks) > 0 {
 		applyPurchaseToPortfolioBtn = markup.Data("применить докупку к портфелю", tgCallback.ApplyCalculatedPurchaseToPortfolio)
-	} 
-	
+	}
+
 	markup.Inline(
 		markup.Row(applyPurchaseToPortfolioBtn),
 		markup.Row(backToPortfolioBtn),
