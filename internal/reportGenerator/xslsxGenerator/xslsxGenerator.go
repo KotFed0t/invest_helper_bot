@@ -208,6 +208,42 @@ func (g *XSLSXGenerator) fillSheet(ctx context.Context, f *excelize.File, portfo
 	_ = f.SetCellStr(sheetName, "J2", "процент")
 	_ = f.SetCellStr(sheetName, "K2", "рубли")
 
+	// Статистика
+	// отклонение от индекса
+	err = f.MergeCell(sheetName, "L1", "N1")
+	if err != nil {
+		return err
+	}
+
+	f.SetCellValue(sheetName, "L1", "Статистика")
+
+	styleID, err = f.NewStyle(&excelize.Style{
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+		Font: &excelize.Font{
+			Bold: true,
+			Size: 11,
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Pattern: 1,
+			Color:   []string{"#D0CECE"}, // Светло-серый цвет
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := f.SetCellStyle(sheetName, "L1", "L1", styleID); err != nil {
+		return fmt.Errorf("ошибка применения стиля: %w", err)
+	}
+
+	_ = f.SetCellStr(sheetName, "L2", "ср. цена покупки")
+	_ = f.SetCellStr(sheetName, "M2", "процент роста")
+	_ = f.SetCellStr(sheetName, "N2", "сумма роста")
+
 	for i, stock := range portfolio.Stocks {
 		_ = f.SetCellStr(sheetName, fmt.Sprintf("A%d", i+3), stock.Shortname)
 		_ = f.SetCellStr(sheetName, fmt.Sprintf("B%d", i+3), stock.Ticker)
@@ -225,6 +261,10 @@ func (g *XSLSXGenerator) fillSheet(ctx context.Context, f *excelize.File, portfo
 
 		totalPriceDelta := stock.TotalPrice.Sub(portfolio.BalanceInsideIndex.Mul(stock.TargetWeight.Div(decimal.NewFromInt(100))))
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", i+3), totalPriceDelta.InexactFloat64())
+
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("L%d", i+3), stock.AvgPrice.InexactFloat64())
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("M%d", i+3), stock.GrowthPercent.InexactFloat64())
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("N%d", i+3), stock.GrowthSum.InexactFloat64())
 	}
 
 	// история операций
