@@ -48,8 +48,6 @@ type Transactor interface {
 	WithinTransaction(ctx context.Context, tFunc func(ctx context.Context) error) error
 }
 
-// TODO позже разбить интерфейс на stocksRepo и на CryptoRepo. (но саму репу можно просто по файлам разбить, а структуру оставить одну для удобства
-// и сюда просто ее дважды передать как под два разных интерфейса)
 type Repository interface {
 	InsertUser(ctx context.Context, chatID int64) (userID int64, err error)
 	CreateStocksPortfolio(ctx context.Context, name string, userID int64) (portfolioID int64, err error)
@@ -342,6 +340,20 @@ func (s *InvestHelperService) GetPortfolioSummaryInfo(ctx context.Context, portf
 		return model.PortfolioSummary{}, err
 	}
 	slog.Debug("got stocks from DB", slog.String("rqID", rqID), slog.String("op", op), slog.Any("stocks", stocks))
+
+	if len(stocks) == 0 { // пока в портфель не добавлено акций
+		name, err := s.repo.GetPortfolioName(ctx, portfolioID)
+		if err != nil {
+			slog.Warn("got error from repo.GetPortfolioName", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		}
+
+		summary.PortfolioName = name
+		summary.PortfolioID = portfolioID
+
+		go s.cache.SetPortfolioSummary(context.WithoutCancel(ctx), portfolioID, summary)
+
+		return summary, nil
+	}
 
 	// получаем актуальные цены для акций
 	tickers := make([]string, 0, len(stocks))
@@ -799,13 +811,6 @@ func (s *InvestHelperService) CalculatePurchase(ctx context.Context, portfolioID
 		slog.Debug("CalculatePurchase finished", slog.String("rqID", rqID), slog.String("op", op), slog.String("purchaseSum", purchaseSum.StringFixed(2)), slog.Int64("portfolioID", portfolioID))
 	}()
 
-	// TODO по идее можно модернизировать GetPortfolioSummary чтобы передавать туда stocks и infoMap
-	// и enrich stocks можно передавать уже отсеенные stocks и infoMap
-	// а здесь сразу селектить все акции портфеля, получать infoMap и уже с этой инфой вызывать summary и enrich.
-
-	// таким образом всего 1 запрос в бД при любом раскладе (ну и в саммари за portfolio name)
-	// всего 1 запрос в кэш или moex по обогащению акций
-
 	// получить из БД акции где вес > 0
 	stocksDb, err := s.repo.GetOnlyInIndexStocksFromPortfolio(ctx, portfolioID)
 	if err != nil {
@@ -1183,6 +1188,3 @@ func (s *InvestHelperService) ApplyCalculatedPurchaseToPortfolio(ctx context.Con
 
 	return nil
 }
-
-//TODO все вроде готово, теперь можно выводить на интерфейс и проверить правильность работы в совокупности.
-// ну и в отчет добавить можно проценты роста и суммы роста

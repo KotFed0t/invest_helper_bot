@@ -34,7 +34,7 @@ func (a *MoexApi) getStocsInfo(ctx context.Context, tickers ...string) (moexMode
 	params := map[string]string{
 		"iss.meta":           "off",
 		"securities.columns": "SECID,SHORTNAME,LOTSIZE,CURRENCYID,STATUS",
-		"marketdata.columns": "SECID,LAST",
+		"marketdata.columns": "SECID,LAST,MARKETPRICE",
 	}
 
 	if len(tickers) > 0 {
@@ -111,7 +111,7 @@ func (a *MoexApi) GetStocInfo(ctx context.Context, ticker string) (moexModel.Sto
 
 func (a *MoexApi) GetStocsInfo(ctx context.Context, tickers []string) (map[string]moexModel.StockInfo, error) {
 	rqId := utils.GetRequestIDFromCtx(ctx)
-	
+
 	slog.Debug("start MoexApi.GetStocsInfo request", slog.String("rqID", rqId))
 
 	rawStocksInfo, err := a.getStocsInfo(ctx, tickers...)
@@ -138,7 +138,7 @@ func (a *MoexApi) parseRawStocksInfoToSlice(rawStocksInfo moexModel.RawStocksInf
 
 	res := make([]moexModel.StockInfo, 0, len(rawStocksInfo.Marketdata.Data))
 
-	err := a.handleRawStocksInfo(rawStocksInfo, func(stock moexModel.StockInfo){
+	err := a.handleRawStocksInfo(rawStocksInfo, func(stock moexModel.StockInfo) {
 		res = append(res, stock)
 	})
 	if err != nil {
@@ -155,7 +155,7 @@ func (a *MoexApi) parseRawStocksInfoToMap(rawStocksInfo moexModel.RawStocksInfo)
 
 	res := make(map[string]moexModel.StockInfo, len(rawStocksInfo.Marketdata.Data))
 
-	err := a.handleRawStocksInfo(rawStocksInfo, func(stock moexModel.StockInfo){
+	err := a.handleRawStocksInfo(rawStocksInfo, func(stock moexModel.StockInfo) {
 		res[stock.Ticker] = stock
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func (a *MoexApi) parseRawStocksInfoSingle(rawStocksInfo moexModel.RawStocksInfo
 
 	if len(rawStocksInfo.Marketdata.Data) == 0 {
 		return moexModel.StockInfo{}, externalApi.ErrNotFound
-	} 
+	}
 
 	res, err := a.parseRawStocksInfoToSlice(rawStocksInfo)
 	if err != nil {
@@ -209,6 +209,14 @@ func (a *MoexApi) handleRawStocksInfo(rawStocksInfo moexModel.RawStocksInfo, han
 				stockInfo.Ticker, ok = rawStocksInfo.Marketdata.Data[i][j].(string)
 			case "LAST":
 				if rawStocksInfo.Marketdata.Data[i][j] != nil {
+					var price float64
+					price, ok = rawStocksInfo.Marketdata.Data[i][j].(float64)
+					if ok {
+						stockInfo.Price = decimal.NewFromFloat(price)
+					}
+				}
+			case "MARKETPRICE":
+				if rawStocksInfo.Marketdata.Data[i][j] != nil && stockInfo.Price.IsZero() {
 					var price float64
 					price, ok = rawStocksInfo.Marketdata.Data[i][j].(float64)
 					if ok {

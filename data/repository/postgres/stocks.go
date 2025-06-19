@@ -192,7 +192,6 @@ func (r *Postgres) InsertStockToPortfolio(ctx context.Context, portfolioID int64
 	return nil
 }
 
-// TODO мб переписать на атомарное обновление веса? То есть как и quantity плюсовать. Чтобы не был важен порядок апдейтов если они параллельно идут. (в контроллере сразу высчитывать старый - новый)
 func (r *Postgres) UpdatePortfolioStock(ctx context.Context, portfolioID int64, ticker string, weight *decimal.Decimal, quantity *int) (err error) {
 	rqID := utils.GetRequestIDFromCtx(ctx)
 	query := `

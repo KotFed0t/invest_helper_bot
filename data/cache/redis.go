@@ -61,7 +61,6 @@ func (r *RedisCache) GetStockInfo(ctx context.Context, ticker string) (moexModel
 
 	res, err := r.redis.Get(ctx, ticker).Result()
 	if err != nil {
-		// TODO добавить проверку на redis.Nil чтобы писать warning а не error (везде)
 		slog.Error("failed on redis.Get", slog.String("rqID", rqID), slog.String("err", err.Error()), slog.String("key", ticker))
 		return moexModel.StockInfo{}, err
 	}
