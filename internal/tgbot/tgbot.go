@@ -134,6 +134,8 @@ func (b *TGBot) setupRoutes() {
 			return b.ctrl.GenerateReport(c)
 		case callbackBtnText == tgCallback.ApplyCalculatedPurchaseToPortfolio:
 			return b.ctrl.ApplyCalculatedPurchaseToPortfolio(c)
+		case callbackBtnText == tgCallback.CreatePortfolio:
+			return b.ctrl.InitStocksPortfolioCreation(c)
 		case callbackBtnText == tgCallback.PageNumber:
 			return nil
 		case strings.HasPrefix(callbackBtnText, tgCallback.EditStockPrefix):

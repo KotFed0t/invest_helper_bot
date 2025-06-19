@@ -54,7 +54,7 @@ func PortfolioDetailsResponse(portfolio model.PortfolioPage, stocksPerPage int) 
 	}
 
 	if portfolio.CurPage > 1 || portfolio.TotalPages > portfolio.CurPage {
-		paginationBtns = append(paginationBtns, markup.Data(fmt.Sprintf("страница %d из %d", portfolio.CurPage, portfolio.TotalPages), tgCallback.PageNumber))
+		paginationBtns = append(paginationBtns, markup.Data(fmt.Sprintf("стр %d из %d", portfolio.CurPage, portfolio.TotalPages), tgCallback.PageNumber))
 	}
 
 	if portfolio.TotalPages > portfolio.CurPage {
@@ -299,7 +299,7 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 	}
 
 	if curPage > 1 || hasNextPage {
-		paginationBtns = append(paginationBtns, markup.Data(fmt.Sprintf("страница %d", curPage), tgCallback.PageNumber))
+		paginationBtns = append(paginationBtns, markup.Data(fmt.Sprintf("стр %d", curPage), tgCallback.PageNumber))
 	}
 
 	if hasNextPage {
@@ -308,7 +308,9 @@ func PortfolioListResponse(portfolios []model.Portfolio, portfoliosPerPage, curP
 
 	generateReportBtn := markup.Data("сгенерировать отчет", tgCallback.GenerateReport)
 
-	menuRows = append(menuRows, markup.Row(generateReportBtn), markup.Row(paginationBtns...))
+	createPortfolioBtn := markup.Data("создать портфель", tgCallback.CreatePortfolio)
+
+	menuRows = append(menuRows, markup.Row(createPortfolioBtn), markup.Row(generateReportBtn), markup.Row(paginationBtns...))
 
 	markup.Inline(menuRows...)
 

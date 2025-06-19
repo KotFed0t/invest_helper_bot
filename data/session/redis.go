@@ -49,7 +49,7 @@ func (r *RedisSession) GetSession(ctx context.Context, key string) (model.Sessio
 	res, err := r.redis.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			slog.Debug("session not found in redis", slog.String("rqID", rqID))
+			slog.Warn("session not found in redis", slog.String("rqID", rqID))
 			return model.Session{}, ErrNotFound
 		}
 		

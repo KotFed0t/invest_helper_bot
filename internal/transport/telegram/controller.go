@@ -105,7 +105,7 @@ func (ctrl *Controller) ProcessStocksPortfolioCreation(c tele.Context) error {
 	portfolioID, err := ctrl.investHelperService.CreateStocksPortfolio(ctx, c.Message().Text, c.Chat().ID)
 	if err != nil {
 		slog.Error("got error from investHelperService.CreateStocksPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.PortfolioID = portfolioID
@@ -142,13 +142,16 @@ func (ctrl *Controller) InitAddStock(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingTicker
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("Введите тикер")
@@ -170,7 +173,7 @@ func (ctrl *Controller) ProcessAddStock(c tele.Context) error {
 		if errors.Is(err, service.ErrNotFound) {
 			return c.Send("Не удалось найти указанный тикер", telebotConverter.StockNotFoundMarkup())
 		}
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.StockTicker = ticker
@@ -182,13 +185,16 @@ func (ctrl *Controller) InitChangeWeight(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingWeight
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("введите новое значение веса:")
@@ -200,7 +206,10 @@ func (ctrl *Controller) ProcessChangeWeight(c tele.Context) error {
 	op := "Controller.ProcessChangeWeight"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	input := strings.Replace(c.Message().Text, ",", ".", 1)
@@ -217,18 +226,18 @@ func (ctrl *Controller) ProcessChangeWeight(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockChanges != nil {
@@ -244,13 +253,16 @@ func (ctrl *Controller) InitBuyStock(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingBuyStockQuantity
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("введите кол-во акций к покупке:")
@@ -262,7 +274,10 @@ func (ctrl *Controller) ProcessBuyStock(c tele.Context) error {
 	op := "Controller.ProcessBuyStock"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	quantity, err := strconv.Atoi(c.Message().Text)
@@ -277,18 +292,18 @@ func (ctrl *Controller) ProcessBuyStock(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockChanges != nil {
@@ -304,13 +319,16 @@ func (ctrl *Controller) InitSellStock(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingSellStockQuantity
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("введите кол-во акций к продаже:")
@@ -322,7 +340,10 @@ func (ctrl *Controller) ProcessSellStock(c tele.Context) error {
 	op := "Controller.ProcessSellStock"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	quantity, err := strconv.Atoi(c.Message().Text)
@@ -332,18 +353,18 @@ func (ctrl *Controller) ProcessSellStock(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if stock.Quantity < quantity {
@@ -367,13 +388,16 @@ func (ctrl *Controller) InitChangePrice(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingChangePrice
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("введите цену за 1 акцию:")
@@ -385,7 +409,10 @@ func (ctrl *Controller) ProcessChangePrice(c tele.Context) error {
 	op := "Controller.ProcessChangePrice"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	input := strings.Replace(c.Message().Text, ",", ".", 1)
@@ -397,18 +424,18 @@ func (ctrl *Controller) ProcessChangePrice(c tele.Context) error {
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockChanges != nil {
@@ -429,23 +456,26 @@ func (ctrl *Controller) ProcessAddStockToPortfolio(c tele.Context) error {
 	op := "Controller.ProcessAddStockToPortfolio"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.AddStockToPortfolio(ctx, chatSession.StockTicker, chatSession.PortfolioID, c.Chat().ID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.AddStockToPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit(telebotConverter.StockDetailResponse(stock, nil))
@@ -457,17 +487,20 @@ func (ctrl *Controller) ProcessDeleteStock(c tele.Context) error {
 	op := "Controller.ProcessDeleteStock"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	page := 1
@@ -478,15 +511,15 @@ func (ctrl *Controller) ProcessDeleteStock(c tele.Context) error {
 	err = ctrl.investHelperService.DeleteStockFromPortfolio(ctx, chatSession.PortfolioID, chatSession.StockTicker)
 	if err != nil {
 		slog.Error("failed on investHelperService.DeleteStockFromPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
-	_ = ctrl.sendAutoDeleteMsg(c, "акция успешно удалена")
+	go ctrl.sendAutoDeleteMsg(c, "акция успешно удалена")
 
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
@@ -498,12 +531,15 @@ func (ctrl *Controller) ProcessBackToPortfolio(c tele.Context) error {
 	op := "Controller.ProcessBackToPortfolio"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	page := 1
@@ -514,7 +550,7 @@ func (ctrl *Controller) ProcessBackToPortfolio(c tele.Context) error {
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.DefaultAction
@@ -533,26 +569,29 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.StockChanges == nil { // просто отрисуем текущий stock без изменений
 		stock, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, chatSession.StockTicker, chatSession.PortfolioID)
 		if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 			slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-			return c.Send(internalErrMsg)
+			return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 		}
 		return c.Send(telebotConverter.StockDetailResponse(stock, nil))
 	}
 
 	if chatSession.StockTicker == "" {
 		slog.Error("stockTicker is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	stock, err := ctrl.investHelperService.SaveStockChangesToPortfolio(
@@ -565,7 +604,7 @@ func (ctrl *Controller) SaveStockChanges(c tele.Context) error {
 	)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("got error from investHelperService.SaveStockChangesToPortfolio", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.StockChanges = nil
@@ -580,12 +619,15 @@ func (ctrl *Controller) GoToEditStock(c tele.Context) error {
 	op := "Controller.GoToEditStock"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	ticker := strings.TrimPrefix(c.Callback().Data, fmt.Sprintf("\f%s", tgCallback.EditStockPrefix))
@@ -593,7 +635,7 @@ func (ctrl *Controller) GoToEditStock(c tele.Context) error {
 	stockInfo, err := ctrl.investHelperService.GetPortfolioStockInfo(ctx, ticker, chatSession.PortfolioID)
 	if err != nil && !errors.Is(err, service.ErrActualStockInfoUnavailable) {
 		slog.Error("failed on investHelperService.GetPortfolioStockInfo", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.StockTicker = ticker
@@ -608,25 +650,28 @@ func (ctrl *Controller) GoToPortfolioPage(c tele.Context) error {
 	op := "Controller.NextPagePortfolio"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	pageStr := strings.TrimPrefix(c.Callback().Data, fmt.Sprintf("\f%s", tgCallback.ToPortfolioPage))
 	page, err := strconv.Atoi(pageStr)
 	if err != nil {
 		slog.Error("can't convert pageStr to int", slog.String("rqID", rqID), slog.String("op", op), slog.String("pageStr", pageStr))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.CurPortfolioDetailsPage = page
@@ -639,13 +684,16 @@ func (ctrl *Controller) InitCalculatePurchase(c tele.Context) error {
 	ctx := utils.CreateCtxWithRqID(c)
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession.Action = model.ExpectingPurchaseSum
 	err = ctrl.session.SetSession(ctx, strconv.FormatInt(c.Chat().ID, 10), chatSession)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit("введите сумму закупки:")
@@ -657,12 +705,15 @@ func (ctrl *Controller) ProcessCalculatePurchase(c tele.Context) error {
 	op := "Controller.ProcessCalculatePurchase"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	input := strings.Replace(c.Message().Text, ",", ".", 1)
@@ -675,7 +726,7 @@ func (ctrl *Controller) ProcessCalculatePurchase(c tele.Context) error {
 	stocksToPurchase, err := ctrl.investHelperService.CalculatePurchase(ctx, chatSession.PortfolioID, purchaseSum)
 	if err != nil {
 		slog.Error("failed on investHelperService.CalculatePurchase", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if len(stocksToPurchase) == 0 {
@@ -712,7 +763,7 @@ func (ctrl *Controller) GetPortfolios(c tele.Context) error {
 	portfolios, hasNextPage, err := ctrl.investHelperService.GetPortfolios(ctx, c.Chat().ID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolios", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession, _ := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
@@ -735,13 +786,13 @@ func (ctrl *Controller) GoToEditPortfolio(c tele.Context) error {
 	portfolioID, err := strconv.ParseInt(callbackStr, 10, 64)
 	if err != nil {
 		slog.Error("invalid portfolioID in callback", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()), slog.String("callback", c.Callback().Data))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, portfolioID, 1)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	chatSession, _ := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
@@ -765,7 +816,7 @@ func (ctrl *Controller) ProcessBackToPortfolioList(c tele.Context) error {
 	portfolios, hasNextPage, err := ctrl.investHelperService.GetPortfolios(ctx, c.Chat().ID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolios", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	// обнуляем все в сессии, кроме страницы pageList
@@ -781,18 +832,21 @@ func (ctrl *Controller) RebalanceWeights(c tele.Context) error {
 	op := "Controller.RebalanceWeights"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	err = ctrl.investHelperService.RebalanceWeights(ctx, chatSession.PortfolioID)
 	if err != nil {
 		slog.Error("failed on investHelperService.RebalanceWeights", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	page := 1
@@ -803,10 +857,10 @@ func (ctrl *Controller) RebalanceWeights(c tele.Context) error {
 	portfolioPage, err := ctrl.investHelperService.GetPortfolioPage(ctx, chatSession.PortfolioID, page)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolioPage", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
-	_ = ctrl.sendAutoDeleteMsg(c, "ребаланс произведен успешно")
+	go ctrl.sendAutoDeleteMsg(c, "ребаланс произведен успешно")
 
 	return c.Edit(telebotConverter.PortfolioDetailsResponse(portfolioPage, ctrl.cfg.StocksPerPage))
 }
@@ -836,26 +890,29 @@ func (ctrl *Controller) ProcessDeletePortfolio(c tele.Context) error {
 	op := "Controller.ProcessDeletePortfolio"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	err = ctrl.investHelperService.DeletePortfolio(ctx, chatSession.PortfolioID)
 	if err != nil {
 		slog.Error("failed on investHelperService.DeletePortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
-	_ = ctrl.sendAutoDeleteMsg(c, "портфель успешно удален")
+	go ctrl.sendAutoDeleteMsg(c, "портфель успешно удален")
 
 	portfolios, hasNextPage, err := ctrl.investHelperService.GetPortfolios(ctx, c.Chat().ID, 1)
 	if err != nil {
 		slog.Error("failed on investHelperService.GetPortfolios", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Edit(telebotConverter.PortfolioListResponse(portfolios, ctrl.cfg.PortfoliosPerPage, 1, hasNextPage))
@@ -867,26 +924,29 @@ func (ctrl *Controller) ApplyCalculatedPurchaseToPortfolio(c tele.Context) error
 	op := "Controller.ApplyCalculatedPurchaseToPortfolio"
 	chatSession, err := ctrl.getSessionFromTeleCtxOrStorage(ctx, c)
 	if err != nil {
-		return c.Send(internalErrMsg)
+		if errors.Is(err, session.ErrNotFound) {
+			return ctrl.ProcessBackToPortfolioList(c)
+		}
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if chatSession.PortfolioID == 0 {
 		slog.Error("PortfolioID is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	if len(chatSession.StocksToPurchase) == 0 {
 		slog.Error("StocksToPurchase is empty in chatSession", slog.String("rqID", rqID), slog.String("op", op))
-		return c.Send(internalErrMsg)
+		return ctrl.ProcessBackToPortfolioList(c)
 	}
 
 	err = ctrl.investHelperService.ApplyCalculatedPurchaseToPortfolio(ctx, chatSession.PortfolioID, chatSession.StocksToPurchase)
 	if err != nil {
 		slog.Error("failed on investHelperService.ApplyCalculatedPurchaseToPortfolio", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
-	_ = ctrl.sendAutoDeleteMsg(c, "операции успешно применены")
+	go ctrl.sendAutoDeleteMsg(c, "операции успешно применены")
 
 	_, markup := telebotConverter.CalculatedStockPurchaseResponse(nil, decimal.NewFromInt(0))
 
@@ -901,7 +961,7 @@ func (ctrl *Controller) GenerateReport(c tele.Context) error {
 	fileBytes, filename, err := ctrl.investHelperService.GeneratePortfoliosReport(ctx, c.Chat().ID)
 	if err != nil {
 		slog.Error("failed on investHelperService.GeneratePortfoliosReport", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	if len(fileBytes) < ctrl.cfg.Telegram.FileLimitInBytes {
@@ -916,16 +976,11 @@ func (ctrl *Controller) GenerateReport(c tele.Context) error {
 	downloadLink, err := ctrl.investHelperService.UploadFileToCloud(ctx, bytes.NewReader(fileBytes), filename)
 	if err != nil {
 		slog.Error("failed on investHelperService.UploadFileToCloud", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
-		return c.Send(internalErrMsg)
+		return ctrl.sendAutoDeleteMsg(c, internalErrMsg)
 	}
 
 	return c.Send(downloadLink)
 }
-
-// TODO вывод ошибок и других сообщений сделать временным, чтоыб не засорять
-
-// TODO при ошибке сесcии (устарела) - не выбрасывать ошибку, а возвращать к списку портфелей? и выводить сообщение временное "что-то пошло не так"
-// мб еще проверять сетевая ли ошибка или просто нет сессии
 
 // TODO сделать job для удаления старых файлов на google drive
 

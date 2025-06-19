@@ -19,6 +19,7 @@ const (
 	ProcessDeletePortfolio             string = "process_delete_portfolio"
 	GenerateReport                     string = "generate_report"
 	ApplyCalculatedPurchaseToPortfolio string = "apply_calculated_purchase_to_portolio"
+	CreatePortfolio                    string = "create_portolio"
 
 	// prefixes
 	EditStockPrefix     string = "edit_stock:"
