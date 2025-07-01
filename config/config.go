@@ -64,11 +64,13 @@ type Cache struct {
 }
 
 type Jobs struct {
-	FillMoexCacheInterval time.Duration `env:"FILL_MOEX_CACHE_JOB_INTERVAL"`
+	FillMoexCacheInterval  time.Duration `env:"FILL_MOEX_CACHE_JOB_INTERVAL"`
+	DeleteOldFilesInterval time.Duration `env:"DELETE_OLD_FILES_JOB_INTERVAL"`
 }
 
 type GoogleDrive struct {
-	CredentialsFile  string `env:"GOOGLE_DRIVE_CREDENTIALS_FILE"`
+	CredentialsFile string        `env:"GOOGLE_DRIVE_CREDENTIALS_FILE"`
+	FileTTL         time.Duration `env:"GOOGLE_DRIVE_FILE_TTL"`
 }
 
 func MustLoad() *Config {

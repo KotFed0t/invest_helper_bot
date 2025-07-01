@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mime"
 	"path/filepath"
+	"time"
 
 	"github.com/KotFed0t/invest_helper_bot/config"
 	"github.com/KotFed0t/invest_helper_bot/utils"
@@ -68,4 +69,56 @@ func (a *GoogleDriveApi) UploadFile(ctx context.Context, reader io.Reader, filen
 	slog.Debug("UploadFile completed", slog.String("rqID", rqID), slog.String("op", op), slog.Any("uploadedFile", uploadedFile))
 
 	return fmt.Sprintf(downloadLinkTemplate, uploadedFile.Id), nil
+}
+
+func (a *GoogleDriveApi) DeleteOldFiles(ctx context.Context) error {
+	rqID := utils.GetRequestIDFromCtx(ctx)
+	op := "GoogleDriveApi.DeleteOldFiles"
+
+	slog.Debug("DeleteOldFiles start", slog.String("rqID", rqID), slog.String("op", op))
+	r, err := a.srv.Files.List().Fields("files(id, createdTime)").Do()
+	if err != nil {
+		slog.Error("failed on getting files", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+		return err
+	}
+
+	totalFiles := len(r.Files)
+	deletedFiles := 0
+	for _, f := range r.Files {
+		createdTime, err := time.Parse(time.RFC3339, f.CreatedTime)
+		if err != nil {
+			slog.Error(
+				"failed parse time",
+				slog.String("rqID", rqID),
+				slog.String("op", op),
+				slog.String("err", err.Error()),
+				slog.String("fileID", f.Id),
+				slog.String("createdTime", f.CreatedTime),
+			)
+			continue
+		}
+
+		if createdTime.Before(time.Now().Add(-1 * a.cfg.GoogleDrive.FileTTL)) {
+			err = a.srv.Files.Delete(f.Id).Do()
+			if err != nil {
+				slog.Error(
+					"failed delete file",
+					slog.String("rqID", rqID),
+					slog.String("op", op),
+					slog.String("err", err.Error()),
+					slog.String("fileID", f.Id),
+				)
+			}
+			deletedFiles++
+		}
+	}
+
+	err = a.srv.Files.EmptyTrash().Do()
+	if err != nil {
+		slog.Error("failed empty trash", slog.String("rqID", rqID), slog.String("op", op), slog.String("err", err.Error()))
+	}
+
+	slog.Info("delete old files done", slog.Int("deletedFiles", deletedFiles), slog.Int("remaining files", totalFiles-deletedFiles))
+
+	return nil
 }

@@ -982,10 +982,6 @@ func (ctrl *Controller) GenerateReport(c tele.Context) error {
 	return c.Send(downloadLink)
 }
 
-// TODO сделать job для удаления старых файлов на google drive
-
 // TODO поправить логирование излишнее
 
 // TODO юнит тесты сервисного слоя
-
-// TODO напоминалки?

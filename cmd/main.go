@@ -60,6 +60,7 @@ func main() {
 
 	sched := scheduler.New()
 	sched.NewIntervalJob("fill moex cache", investHelperSrv.FillMoexCache, cfg.Jobs.FillMoexCacheInterval, true)
+	sched.NewIntervalJob("delete old files from goolgle drive", googleCloudStorage.DeleteOldFiles, cfg.Jobs.DeleteOldFilesInterval, true)
 	sched.Start()
 	defer sched.Stop()
 
